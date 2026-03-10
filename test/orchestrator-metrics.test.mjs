@@ -105,6 +105,10 @@ test('logs score trends, agent timings, and total runtime summary', async () => 
     assert.match(output, /Security Engineer completed in /);
     assert.match(output, /Product Owner completed in /);
     assert.match(output, /Documentation Writer completed in /);
+    assert.match(output, /Iteration 1 completed in .* \(retry\)\./);
+    assert.match(output, /Iteration 2 completed in .* \(retry\)\./);
+    assert.match(output, /Iteration 3 completed in .* \(approved\)\./);
+    assert.match(output, /Iteration times: #1: .* \(retry\) \| #2: .* \(retry\) \| #3: .* \(approved\)/);
     assert.match(output, /Iterations: 3/);
     assert.match(output, /Total time: /);
   } finally {

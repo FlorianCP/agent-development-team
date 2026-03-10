@@ -6,7 +6,15 @@ import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
-import type { ADTConfig, AgentResult, CommandPolicy, ProjectContext, ScoreHistory } from './types.js';
+import type {
+  ADTConfig,
+  AgentResult,
+  CommandPolicy,
+  IterationTiming,
+  ProjectContext,
+  RunMetrics,
+  ScoreHistory,
+} from './types.js';
 import { RequirementsEngineer } from './agents/requirements-engineer.js';
 import { Architect } from './agents/architect.js';
 import { Developer } from './agents/developer.js';
@@ -49,9 +57,7 @@ export class Orchestrator {
       feedback: [],
       developerTrustMode: this.config.allowFullAuto ? 'high' : 'safe',
       developerCommandPolicy: this.createDefaultCommandPolicy(),
-      metrics: {
-        scoreHistory: this.createScoreHistory(),
-      },
+      metrics: this.createRunMetrics(),
     };
 
     console.log('\n🤖 Agent Development Team v0.1.0');
@@ -102,9 +108,7 @@ export class Orchestrator {
       developerTrustMode: this.config.allowFullAuto ? 'high' : 'safe',
       developerCommandPolicy: this.createDefaultCommandPolicy(),
       isSelfImprove: true,
-      metrics: {
-        scoreHistory: this.createScoreHistory(),
-      },
+      metrics: this.createRunMetrics(),
     };
 
     console.log('\n🤖 Agent Development Team — Self-Improvement Mode');
@@ -211,6 +215,7 @@ export class Orchestrator {
 
   private async developmentLoop(context: ProjectContext, rl?: Interface): Promise<boolean> {
     const scoreHistory = this.ensureScoreHistory(context);
+    const iterationDurations = this.ensureIterationDurations(context);
     const devAgent = new Developer(this.provider);
     const reviewAgent = new Reviewer(this.provider);
     const qaAgent = new QAEngineer(this.provider);
@@ -219,6 +224,7 @@ export class Orchestrator {
 
     while (context.iteration < context.maxIterations) {
       context.iteration++;
+      const iterationStartedAtMs = Date.now();
       logStep(`🔄 Development Iteration ${context.iteration}/${context.maxIterations}`);
 
       // Git checkpoint before developer modifies code (self-improve only)
@@ -236,6 +242,12 @@ export class Orchestrator {
         log('🛑', 'Developer requested explicit human approval before continuing.');
         logDetail(approvalReason);
         if (!rl || !process.stdin.isTTY) {
+          this.completeIteration(
+            iterationDurations,
+            context.iteration,
+            iterationStartedAtMs,
+            'halted',
+          );
           return false;
         }
         const continueAutomatedChecks = await askYesNo(
@@ -243,6 +255,12 @@ export class Orchestrator {
           '   Complete the manual step, then continue automated review gates?',
         );
         if (!continueAutomatedChecks) {
+          this.completeIteration(
+            iterationDurations,
+            context.iteration,
+            iterationStartedAtMs,
+            'halted',
+          );
           return false;
         }
       }
@@ -299,12 +317,24 @@ export class Orchestrator {
           );
           context.feedback.push(feedback);
           this.logScoreTrends(scoreHistory);
+          this.completeIteration(
+            iterationDurations,
+            context.iteration,
+            iterationStartedAtMs,
+            'retry',
+          );
           log('⚠️', `Issues found. Starting iteration ${context.iteration + 1}...`);
           continue;
         } else {
           this.logScoreTrends(scoreHistory);
           log('🛑', 'Max iterations reached with unresolved critical/quality issues. Failing run.');
           logDetail('Product Owner review skipped because quality gate was not met.');
+          this.completeIteration(
+            iterationDurations,
+            context.iteration,
+            iterationStartedAtMs,
+            'max-iterations',
+          );
           return false;
         }
       }
@@ -324,15 +354,33 @@ export class Orchestrator {
 
       if (poResult.success) {
         log('✅', 'Product Owner approved!');
+        this.completeIteration(
+          iterationDurations,
+          context.iteration,
+          iterationStartedAtMs,
+          'approved',
+        );
         return true;
       }
 
       if (context.iteration < context.maxIterations) {
         context.feedback.push(poResult.output);
+        this.completeIteration(
+          iterationDurations,
+          context.iteration,
+          iterationStartedAtMs,
+          'retry',
+        );
         log('🔄', 'PO requested changes. Continuing development...');
       } else {
         log('⚠️', 'Max iterations reached. Review output manually.');
         logDetail(`PO feedback: ${poResult.output}`);
+        this.completeIteration(
+          iterationDurations,
+          context.iteration,
+          iterationStartedAtMs,
+          'max-iterations',
+        );
       }
     }
 
@@ -759,6 +807,13 @@ export class Orchestrator {
     };
   }
 
+  private createRunMetrics(): RunMetrics {
+    return {
+      scoreHistory: this.createScoreHistory(),
+      iterationDurations: [],
+    };
+  }
+
   private createDefaultCommandPolicy(): CommandPolicy {
     return {
       allowedCommandPrefixes: [
@@ -805,22 +860,47 @@ export class Orchestrator {
     return false;
   }
 
-  private ensureScoreHistory(context: ProjectContext): ScoreHistory {
+  private ensureMetrics(context: ProjectContext): RunMetrics {
     if (!context.metrics) {
-      context.metrics = {
-        scoreHistory: this.createScoreHistory(),
-      };
+      context.metrics = this.createRunMetrics();
     } else if (!context.metrics.scoreHistory) {
       context.metrics.scoreHistory = this.createScoreHistory();
     }
 
-    return context.metrics.scoreHistory;
+    if (!Array.isArray(context.metrics.iterationDurations)) {
+      context.metrics.iterationDurations = [];
+    }
+
+    return context.metrics;
+  }
+
+  private ensureScoreHistory(context: ProjectContext): ScoreHistory {
+    return this.ensureMetrics(context).scoreHistory;
+  }
+
+  private ensureIterationDurations(context: ProjectContext): IterationTiming[] {
+    return this.ensureMetrics(context).iterationDurations;
   }
 
   private recordScore(history: number[], score: number | undefined): void {
     if (typeof score === 'number' && Number.isFinite(score)) {
       history.push(score);
     }
+  }
+
+  private completeIteration(
+    iterationDurations: IterationTiming[],
+    iteration: number,
+    iterationStartedAtMs: number,
+    outcome: IterationTiming['outcome'],
+  ): void {
+    const durationMs = Date.now() - iterationStartedAtMs;
+    iterationDurations.push({
+      iteration,
+      durationMs,
+      outcome,
+    });
+    logDetail(`Iteration ${iteration} completed in ${this.formatDuration(durationMs)} (${outcome}).`);
   }
 
   private logScoreTrends(scoreHistory: ScoreHistory): void {
@@ -855,14 +935,26 @@ export class Orchestrator {
   }
 
   private logRunSummary(context: ProjectContext, runStartedAtMs: number): void {
-    const scoreHistory = this.ensureScoreHistory(context);
+    const metrics = this.ensureMetrics(context);
+    const scoreHistory = metrics.scoreHistory;
     log('📁', `Output: ${context.workspaceDir}`);
     log('📊', `Iterations: ${context.iteration}`);
     log('⏱️', `Total time: ${this.formatDuration(Date.now() - runStartedAtMs)}`);
+    if (metrics.iterationDurations.length > 0) {
+      log('⏱️', `Iteration times: ${this.formatIterationDurations(metrics.iterationDurations)}`);
+    }
 
     if (scoreHistory.review.length > 0 || scoreHistory.qa.length > 0 || scoreHistory.security.length > 0) {
       this.logScoreTrends(scoreHistory);
     }
+  }
+
+  private formatIterationDurations(iterationDurations: IterationTiming[]): string {
+    return iterationDurations
+      .map(({ iteration, durationMs, outcome }) =>
+        `#${iteration}: ${this.formatDuration(durationMs)} (${outcome})`,
+      )
+      .join(' | ');
   }
 
   private formatDuration(durationMs: number): string {

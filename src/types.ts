@@ -62,6 +62,7 @@ export interface ADTConfig {
 
 export interface RunMetrics {
   scoreHistory: ScoreHistory;
+  iterationDurations: IterationTiming[];
 }
 
 export interface ScoreHistory {
@@ -69,6 +70,12 @@ export interface ScoreHistory {
   qa: number[];
   security: number[];
   productOwner: number[];
+}
+
+export interface IterationTiming {
+  iteration: number;
+  durationMs: number;
+  outcome: 'retry' | 'approved' | 'halted' | 'max-iterations';
 }
 
 export const DEFAULT_CONFIG: ADTConfig = {
