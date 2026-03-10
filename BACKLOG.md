@@ -27,6 +27,8 @@ Legend:
 
 - **Logs / Auditability** — Trace logs are kept for all agent interactions, including prompts, outputs, and decisions made at each step. This allows for auditing and understanding the development process. `Impact: High`
 
+- **Reviewer Finding Reports** — After each iteration, the Code Reviewer, QA Engineer, and Security Engineer each write a structured Markdown report of their findings (grouped by severity: critical, major, minor, info) to a persistent artifacts directory (e.g. `docs/reviews/iteration-N-reviewer.md`). Reports accumulate across iterations so the developer, PO, and human can trace how issues were found and resolved. `Impact: High`
+
 - **Reports** — Reports of each agent for each run are saved in a Markdown file in the output directory, so the customer can review the PRD, architecture, code quality feedback, QA results, security findings, and final approval notes. `Impact: High`
 
 - **Progress Events / Callbacks** — Emit structured events (agent-started, agent-completed, iteration-started, etc.) that a future dashboard, web UI, or CI integration could consume. `Impact: High`
