@@ -8,6 +8,11 @@ interface ParseResultOptions {
   evaluatorName?: string;
 }
 
+interface JsonCallResult {
+  output: string;
+  parsed: Record<string, unknown> | null;
+}
+
 export abstract class Agent {
   constructor(
     protected provider: Provider,
@@ -18,6 +23,33 @@ export abstract class Agent {
 
   protected async callProvider(prompt: string, options?: ProviderOptions): Promise<string> {
     return this.provider.execute(prompt, options);
+  }
+
+  protected async callProviderForJson(prompt: string, options?: ProviderOptions): Promise<JsonCallResult> {
+    const maxAttempts = 2;
+    let currentPrompt = prompt;
+    let lastOutput = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const output = await this.callProvider(currentPrompt, options);
+      lastOutput = output;
+      const parsed = parseAgentJson(output);
+
+      if (parsed) {
+        return { output, parsed };
+      }
+
+      if (attempt < maxAttempts) {
+        currentPrompt = `${prompt}
+
+IMPORTANT: Your previous response was malformed. Respond with valid JSON in a \`\`\`json code block.`;
+      }
+    }
+
+    return {
+      output: lastOutput,
+      parsed: null,
+    };
   }
 
   protected parseResult(output: string, options: ParseResultOptions = {}): AgentResult {

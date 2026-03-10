@@ -6,11 +6,13 @@ class FakeProvider {
   name = 'fake';
 
   constructor(response) {
-    this.response = response;
+    this.responses = Array.isArray(response) ? response : [response];
+    this.calls = 0;
   }
 
   async execute() {
-    return this.response;
+    this.calls += 1;
+    return this.responses[Math.min(this.calls - 1, this.responses.length - 1)];
   }
 }
 
@@ -47,4 +49,16 @@ test('generateQuestions ignores malformed questions arrays and falls back safely
     'Are there any specific technology preferences or constraints?',
     'What is the target platform (web, desktop, mobile, CLI)?',
   ]);
+});
+
+test('generateQuestions retries once when first response is malformed JSON', async () => {
+  const provider = new FakeProvider([
+    'Not JSON at all',
+    '```json\n{"questions":["What is the target audience?"]}\n```',
+  ]);
+  const agent = new RequirementsEngineer(provider);
+
+  const questions = await agent.generateQuestions(createContext());
+  assert.deepEqual(questions, ['What is the target audience?']);
+  assert.equal(provider.calls, 2);
 });

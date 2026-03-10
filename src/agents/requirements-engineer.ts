@@ -1,6 +1,5 @@
 import { Agent } from './agent.js';
 import type { AgentResult, ProjectContext } from '../types.js';
-import { parseAgentJson } from '../utils.js';
 
 export class RequirementsEngineer extends Agent {
   constructor(provider: import('../providers/provider.js').Provider) {
@@ -33,9 +32,8 @@ Respond with a JSON object in a \`\`\`json code block:
 
 Generate between 3 and 8 focused questions. Do not ask questions that are already clearly answered in the requirement.`;
 
-    const output = await this.callProvider(prompt, { sandbox: 'read-only' });
-    const result = parseAgentJson(output);
-    const questions = result?.['questions'];
+    const { output, parsed } = await this.callProviderForJson(prompt, { sandbox: 'read-only' });
+    const questions = parsed?.['questions'];
     if (Array.isArray(questions) && questions.every(q => typeof q === 'string')) {
       return questions;
     }
