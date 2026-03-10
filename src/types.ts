@@ -44,6 +44,7 @@ export interface ProjectContext {
   feedback: string[];
   developerTrustMode?: ProviderOptions['trustMode'];
   developerCommandPolicy?: CommandPolicy;
+  isSelfImprove?: boolean;
   metrics?: RunMetrics;
 }
 
@@ -56,6 +57,7 @@ export interface ADTConfig {
   providerTimeoutMs: number;
   allowFullAuto: boolean;
   yesSelfImprove: boolean;
+  gitCheckpoints: boolean;
 }
 
 export interface RunMetrics {
@@ -72,9 +74,10 @@ export interface ScoreHistory {
 export const DEFAULT_CONFIG: ADTConfig = {
   provider: 'codex',
   maxIterations: 5,
-  scoreThreshold: 80,
+  scoreThreshold: 75,
   outputDir: './output',
   providerTimeoutMs: 3600000,
   allowFullAuto: false,
   yesSelfImprove: false,
+  gitCheckpoints: true,
 };

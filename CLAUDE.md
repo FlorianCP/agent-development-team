@@ -40,6 +40,7 @@ npx adt start "..."  # Start a new project
 - The codex provider uses `codex exec` for non-interactive agent execution
 - Each agent constructs a prompt from its template + context and sends it through the provider
 - The development loop iterates until quality thresholds are met or max iterations reached
+- In self-improve mode, git checkpoints are created before each iteration (disable with `--no-git-checkpoints`)
 
 ## Important Patterns
 

@@ -36,6 +36,8 @@ Impact scores: **Critical** = foundational / unlocks many things, **High** = sig
 
 ## Workflow Improvements
 
+- **Project Git Repository Management** — Define how `start` projects interact with git: should ADT init a git repo in the output directory? Should it support targeting an existing repo? How to handle checkpoints, branching, and state recovery for new projects (git checkpoints are currently only used for self-improve). `Impact: High`
+
 - **Max Iterations Handling** — Decide what happens when max-iterations is reached without meeting quality thresholds (e.g. fail with a report of what was achieved and what issues remain). `Impact: High`
 
 - **Parallel Agent Execution** — Run independent agents (Reviewer, QA, Security) in parallel during the development loop instead of sequentially, reducing wall-clock time. `Impact: High`

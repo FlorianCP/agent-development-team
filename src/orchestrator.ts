@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -99,6 +101,7 @@ export class Orchestrator {
       feedback: [],
       developerTrustMode: this.config.allowFullAuto ? 'high' : 'safe',
       developerCommandPolicy: this.createDefaultCommandPolicy(),
+      isSelfImprove: true,
       metrics: {
         scoreHistory: this.createScoreHistory(),
       },
@@ -217,6 +220,11 @@ export class Orchestrator {
     while (context.iteration < context.maxIterations) {
       context.iteration++;
       logStep(`🔄 Development Iteration ${context.iteration}/${context.maxIterations}`);
+
+      // Git checkpoint before developer modifies code (self-improve only)
+      if (this.config.gitCheckpoints && context.isSelfImprove) {
+        await this.createGitCheckpoint(context);
+      }
 
       // Develop
       log('👨‍💻', 'Developing...');
@@ -870,6 +878,24 @@ export class Orchestrator {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds - minutes * 60;
     return `${minutes}m ${seconds.toFixed(1)}s`;
+  }
+
+  private async createGitCheckpoint(context: ProjectContext): Promise<void> {
+    const tag = `adt-checkpoint-iter-${context.iteration}`;
+    try {
+      const execFileAsync = promisify(execFile);
+      // Stage all changes and commit
+      await execFileAsync('git', ['add', '-A'], { cwd: context.workspaceDir });
+      await execFileAsync(
+        'git',
+        ['commit', '-m', `adt: checkpoint before iteration ${context.iteration}`, '--allow-empty'],
+        { cwd: context.workspaceDir },
+      );
+      await execFileAsync('git', ['tag', '-f', tag], { cwd: context.workspaceDir });
+      logDetail(`Git checkpoint created (${tag}).`);
+    } catch {
+      logDetail('Git checkpoint skipped (not a git repo or nothing to commit).');
+    }
   }
 
   private generateProjectName(requirement: string): string {

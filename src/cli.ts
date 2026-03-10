@@ -21,11 +21,12 @@ Options:
   --provider <name>    AI provider to use (default: codex)
   --model <model>      Model to use with the provider
   --max-iterations <n> Max development iterations (default: 5)
-  --threshold <n>      Minimum quality score 0-100 (default: 80)
+  --threshold <n>      Minimum quality score 0-100 (default: 75)
   --provider-timeout-ms <n> Timeout per provider call in milliseconds (default: 3600000)
   --output-dir <dir>   Output directory (default: ./output)
   --full-auto          Opt into autonomous developer execution (--full-auto)
   --yes-self-improve   Required for non-interactive self-improvement runs
+  --no-git-checkpoints Disable git checkpoints during self-improvement iterations
   --allow-external-prd Allow --prd files outside the current workspace
   --help, -h           Show this help message
   --version, -v        Show version
@@ -45,11 +46,12 @@ async function main(): Promise<void> {
       provider: { type: 'string', default: 'codex' },
       model: { type: 'string' },
       'max-iterations': { type: 'string', default: '5' },
-      threshold: { type: 'string', default: '80' },
+      threshold: { type: 'string', default: '75' },
       'provider-timeout-ms': { type: 'string', default: String(DEFAULT_CONFIG.providerTimeoutMs) },
       'output-dir': { type: 'string', default: './output' },
       'full-auto': { type: 'boolean', default: false },
       'yes-self-improve': { type: 'boolean', default: false },
+      'no-git-checkpoints': { type: 'boolean', default: false },
       'allow-external-prd': { type: 'boolean', default: false },
       prd: { type: 'string' },
     },
@@ -90,6 +92,7 @@ async function main(): Promise<void> {
     providerTimeoutMs,
     allowFullAuto: values['full-auto'] ?? DEFAULT_CONFIG.allowFullAuto,
     yesSelfImprove: values['yes-self-improve'] ?? DEFAULT_CONFIG.yesSelfImprove,
+    gitCheckpoints: !(values['no-git-checkpoints'] ?? false),
   };
 
   const provider = createProvider(config);

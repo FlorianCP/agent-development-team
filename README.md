@@ -83,11 +83,12 @@ Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 | `--provider <name>` | `codex` | AI provider to use |
 | `--model <model>` | (provider default) | Model for the provider |
 | `--max-iterations <n>` | `5` | Max development loop iterations |
-| `--threshold <n>` | `80` | Minimum quality score (0-100) |
+| `--threshold <n>` | `75` | Minimum quality score (0-100) |
 | `--provider-timeout-ms <n>` | `3600000` | Timeout per provider call in milliseconds |
 | `--output-dir <dir>` | `./output` | Where to create projects |
 | `--full-auto` | `false` | Opt into autonomous developer execution (`--full-auto`) |
 | `--yes-self-improve` | `false` | Required for non-interactive self-improvement runs |
+| `--no-git-checkpoints` | `false` | Disable git checkpoints during self-improvement iterations |
 | `--allow-external-prd` | `false` | Allow `--prd` paths outside current workspace |
 
 ## Agent Roles
