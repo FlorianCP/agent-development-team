@@ -78,10 +78,12 @@ Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 
 ## Configuration
 
+### CLI Options
+
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--provider <name>` | `codex` | AI provider to use |
-| `--model <model>` | (provider default) | Model for the provider |
+| `--model <model>` | (from config file) | Model for the provider (overrides config file) |
 | `--max-iterations <n>` | `5` | Max development loop iterations |
 | `--threshold <n>` | `75` | Minimum quality score (0-100) |
 | `--provider-timeout-ms <n>` | `3600000` | Timeout per provider call in milliseconds |
@@ -90,6 +92,26 @@ Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 | `--yes-self-improve` | `false` | Required for non-interactive self-improvement runs |
 | `--no-git-checkpoints` | `false` | Disable git checkpoints during self-improvement iterations |
 | `--allow-external-prd` | `false` | Allow `--prd` paths outside current workspace |
+
+### Configuration File
+
+ADT reads provider settings from `.adt.config.json` in the working directory. CLI flags override config file values.
+
+```json
+{
+  "provider": {
+    "codex": {
+      "model": "gpt-5.3-codex",
+      "reasoningEffort": "medium"
+    }
+  }
+}
+```
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `provider.codex.model` | Any model name | Default model for the Codex CLI provider |
+| `provider.codex.reasoningEffort` | `low`, `medium`, `high` | Reasoning effort passed to Codex CLI |
 
 ## Agent Roles
 

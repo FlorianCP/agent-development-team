@@ -18,6 +18,7 @@ interface CodexProviderConfig {
   codexPath?: string;
   defaultTimeoutMs?: number;
   trustedInstallDirs?: string[];
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 type CodexErrorCode =
@@ -73,11 +74,13 @@ export class CodexProvider implements Provider {
   private readonly defaultTimeoutMs: number;
   private readonly debugOutput: boolean;
   private readonly trustedInstallDirs: string[];
+  private readonly reasoningEffort?: 'low' | 'medium' | 'high';
 
   constructor(model?: string, config?: CodexProviderConfig) {
     this.model = model;
     this.defaultTimeoutMs = config?.defaultTimeoutMs ?? 3600000;
     this.debugOutput = process.env['ADT_DEBUG'] === '1';
+    this.reasoningEffort = config?.reasoningEffort;
     this.trustedInstallDirs = (config?.trustedInstallDirs ?? CodexProvider.DEFAULT_TRUSTED_INSTALL_DIRS)
       .map(dir => resolve(dir));
 
@@ -115,6 +118,10 @@ export class CodexProvider implements Provider {
       const model = options?.model ?? this.model;
       if (model) {
         args.push('-m', model);
+      }
+
+      if (this.reasoningEffort) {
+        args.push('-c', `model_reasoning_effort="${this.reasoningEffort}"`);
       }
 
       args.push('-o', outputFile);

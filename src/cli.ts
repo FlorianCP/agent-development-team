@@ -75,17 +75,20 @@ async function main(): Promise<void> {
   }
 
   const maxIterations = parseIntegerOption('max-iterations', values['max-iterations'] ?? '5', 1);
-  const threshold = parseNumberOption('threshold', values.threshold ?? '80', 0, 100);
+  const threshold = parseNumberOption('threshold', values.threshold ?? '75', 0, 100);
   const providerTimeoutMs = parseIntegerOption(
     'provider-timeout-ms',
     values['provider-timeout-ms'] ?? String(DEFAULT_CONFIG.providerTimeoutMs),
     1,
   );
 
+  const fileConfig = await loadConfigFile();
+
   const config: ADTConfig = {
     ...DEFAULT_CONFIG,
     provider: values.provider ?? DEFAULT_CONFIG.provider,
-    model: values.model,
+    model: values.model ?? fileConfig.model,
+    reasoningEffort: fileConfig.reasoningEffort,
     maxIterations,
     scoreThreshold: threshold,
     outputDir: values['output-dir'] ?? DEFAULT_CONFIG.outputDir,
@@ -196,7 +199,10 @@ function isNodeErrno(error: unknown, code: string): boolean {
 function createProvider(config: ADTConfig) {
   switch (config.provider) {
     case 'codex':
-      return new CodexProvider(config.model, { defaultTimeoutMs: config.providerTimeoutMs });
+      return new CodexProvider(config.model, {
+        defaultTimeoutMs: config.providerTimeoutMs,
+        reasoningEffort: config.reasoningEffort,
+      });
     default:
       console.error(`Unknown provider: ${config.provider}`);
       console.error('Available providers: codex');
@@ -226,6 +232,48 @@ function parseNumberOption(name: string, rawValue: string, min: number, max: num
   }
 
   return value;
+}
+
+interface FileConfig {
+  model?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+}
+
+const VALID_REASONING_EFFORTS = new Set(['low', 'medium', 'high']);
+
+async function loadConfigFile(): Promise<FileConfig> {
+  const configPath = resolve('.adt.config.json');
+  let raw: string;
+  try {
+    raw = await readFile(configPath, 'utf-8');
+  } catch {
+    return {};
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    console.error(`Warning: Invalid JSON in ${configPath}, ignoring.`);
+    return {};
+  }
+
+  const result: FileConfig = {};
+  const providerSection = parsed['provider'];
+  if (providerSection && typeof providerSection === 'object') {
+    const codexSection = (providerSection as Record<string, unknown>)['codex'];
+    if (codexSection && typeof codexSection === 'object') {
+      const codex = codexSection as Record<string, unknown>;
+      if (typeof codex['model'] === 'string') {
+        result.model = codex['model'];
+      }
+      if (typeof codex['reasoningEffort'] === 'string' && VALID_REASONING_EFFORTS.has(codex['reasoningEffort'])) {
+        result.reasoningEffort = codex['reasoningEffort'] as FileConfig['reasoningEffort'];
+      }
+    }
+  }
+
+  return result;
 }
 
 main().catch((err) => {

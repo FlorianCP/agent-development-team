@@ -51,6 +51,7 @@ export interface ProjectContext {
 export interface ADTConfig {
   provider: string;
   model?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high';
   maxIterations: number;
   scoreThreshold: number;
   outputDir: string;

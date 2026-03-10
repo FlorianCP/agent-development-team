@@ -35,7 +35,7 @@ Legend:
 
 ## Provider Ecosystem
 
-- ➡️ **Provider: Codex CLI** - Add a way to configure the used model and the reasoning effort for Codex CLI via a local configuration file. Add a default configuration file which uses gpt-5.3-codex with reasoning effort high. Update documentation accordingly. `Impact: High`
+- ✅ **Provider: Codex CLI** - Add a way to configure the used model and the reasoning effort for Codex CLI via a local configuration file. Add a default configuration file which uses gpt-5.3-codex with reasoning effort high. Update documentation accordingly. `Impact: High`
 
 - **Provider: Claude Code** — Implement the Provider interface for Anthropic's Claude via the claude CLI, expanding model choice beyond Codex. `Impact: High`
 

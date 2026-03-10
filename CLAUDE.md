@@ -13,6 +13,10 @@ npx adt --help       # Show CLI usage
 npx adt start "..."  # Start a new project
 ```
 
+## Configuration
+
+Provider settings (model, reasoning effort) are configured in `.adt.config.json`. CLI flags override config file values.
+
 ## Source Layout
 
 - `src/cli.ts` — CLI entry point, argument parsing
