@@ -6,11 +6,11 @@ Impact scores: **Critical** = foundational / unlocks many things, **High** = sig
 
 ## Observability & Reporting
 
-- 🏗️ **Runtime Info** — Run output on console shows how many iterations were needed and how long it took to complete the project. `Impact: Medium`
+- ✅ **Runtime Info** — Run output on console shows how many iterations were needed and how long it took to complete the project. `Impact: Medium`
 
-- 🏗️ **Structured Score Tracking** — Track and display score trends across iterations (e.g. "Review: 60→75→88") so the human can see convergence or stalling. `Impact: Medium`
+- ✅ **Structured Score Tracking** — Track and display score trends across iterations (e.g. "Review: 60→75→88") so the human can see convergence or stalling. `Impact: Medium`
 
-- **Runtime per Iteration** — Track and display how long each iteration takes. `Impact: Low`
+- 🏗️ **Runtime per Iteration** — Track and display how long each complete iteration takes (dev -> review -> QA -> security -> done or next iteration). `Impact: Low`
 
 - **Customer Brief** — PO creates a customer brief with a summary of the final product, decisions made, quality scores, the number of iterations it took, how long it took to complete the project, and any known issues or limitations. `Impact: High`
 

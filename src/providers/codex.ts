@@ -63,6 +63,7 @@ export class CodexProvider implements Provider {
     : [
         '/usr/local/bin',
         '/opt/homebrew/bin',
+        '/opt/homebrew/Caskroom',
         '/usr/bin',
         '/bin',
       ];
