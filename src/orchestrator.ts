@@ -233,7 +233,11 @@ export class Orchestrator {
 
       if (hasCritical || belowThreshold) {
         if (context.iteration < context.maxIterations) {
-          const feedback = this.aggregateFeedback(review, qa, security);
+          const feedback = this.aggregateFeedback(
+            { name: 'Code Reviewer', result: review },
+            { name: 'QA Engineer', result: qa },
+            { name: 'Security Engineer', result: security },
+          );
           context.feedback.push(feedback);
           log('⚠️', `Issues found. Starting iteration ${context.iteration + 1}...`);
           continue;
@@ -394,19 +398,36 @@ export class Orchestrator {
     );
   }
 
-  private aggregateFeedback(...results: AgentResult[]): string {
+  private aggregateFeedback(
+    ...evaluations: Array<{ name: string; result: AgentResult }>
+  ): string {
+    const severityOrder = { critical: 0, major: 1, minor: 2, info: 3 };
     const sections: string[] = [];
 
-    for (const result of results) {
-      if (result.issues && result.issues.length > 0) {
-        const issueList = result.issues
-          .map(i => `- [${i.severity.toUpperCase()}] ${i.description}${i.file ? ` (${i.file})` : ''}${i.suggestion ? ` → ${i.suggestion}` : ''}`)
-          .join('\n');
-        sections.push(issueList);
-      }
-      if (result.output) {
-        sections.push(result.output);
-      }
+    // Find the weakest area to highlight
+    const scored = evaluations
+      .filter(e => typeof e.result.score === 'number')
+      .sort((a, b) => (a.result.score ?? 100) - (b.result.score ?? 100));
+    if (scored.length > 0) {
+      const weakest = scored[0];
+      sections.push(
+        `## Priority\nWeakest area: ${weakest.name} (${weakest.result.score}/100, threshold: ${this.config.scoreThreshold}). Focus here first.`,
+      );
+    }
+
+    for (const { name, result } of evaluations) {
+      const issues = result.issues ?? [];
+      if (issues.length === 0 && !result.output) continue;
+
+      const header = `## ${name} — Score: ${result.score ?? 'N/A'}/100`;
+      const sorted = [...issues].sort(
+        (a, b) => severityOrder[a.severity] - severityOrder[b.severity],
+      );
+      const issueLines = sorted.map(
+        i => `- [${i.severity.toUpperCase()}] ${i.description}${i.file ? ` (${i.file})` : ''}${i.suggestion ? ` → ${i.suggestion}` : ''}`,
+      );
+
+      sections.push([header, ...issueLines].join('\n'));
     }
 
     return sections.join('\n\n');
