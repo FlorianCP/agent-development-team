@@ -26,7 +26,7 @@ export class CodexProvider implements Provider {
 
     const sandbox = options?.sandbox ?? 'workspace-write';
     args.push('-s', sandbox);
-    args.push('-a', 'never');
+    args.push('--full-auto');
 
     if (options?.workingDir) {
       args.push('-C', options.workingDir);
