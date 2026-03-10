@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
-import type { ADTConfig, AgentResult, ProjectContext, ScoreHistory } from './types.js';
+import type { ADTConfig, AgentResult, CommandPolicy, ProjectContext, ScoreHistory } from './types.js';
 import { RequirementsEngineer } from './agents/requirements-engineer.js';
 import { Architect } from './agents/architect.js';
 import { Developer } from './agents/developer.js';
@@ -13,6 +14,12 @@ import { SecurityEngineer } from './agents/security.js';
 import { ProductOwner } from './agents/product-owner.js';
 import { DocumentationWriter } from './agents/documentation-writer.js';
 import { createReadlineInterface, askQuestion, askYesNo, log, logStep, logDetail } from './utils.js';
+
+interface VerificationCheck {
+  label: string;
+  command: string;
+  args: string[];
+}
 
 export class Orchestrator {
   private provider: Provider;
@@ -38,7 +45,8 @@ export class Orchestrator {
       iteration: 0,
       maxIterations: this.config.maxIterations,
       feedback: [],
-      developerTrustMode: 'high',
+      developerTrustMode: this.config.allowFullAuto ? 'high' : 'safe',
+      developerCommandPolicy: this.createDefaultCommandPolicy(),
       metrics: {
         scoreHistory: this.createScoreHistory(),
       },
@@ -64,7 +72,7 @@ export class Orchestrator {
         return false;
       }
 
-      return await this.executeApprovedWorkflow(context, rl, 'Development', runStartedAtMs);
+      return await this.runApprovedWorkflow(context, rl, 'Development', runStartedAtMs);
 
     } finally {
       rl.close();
@@ -89,7 +97,8 @@ export class Orchestrator {
       iteration: 0,
       maxIterations: this.config.maxIterations,
       feedback: [],
-      developerTrustMode: 'safe',
+      developerTrustMode: this.config.allowFullAuto ? 'high' : 'safe',
+      developerCommandPolicy: this.createDefaultCommandPolicy(),
       metrics: {
         scoreHistory: this.createScoreHistory(),
       },
@@ -102,21 +111,40 @@ export class Orchestrator {
 
     // Skip requirements/architecture for self-improvement — go straight to development
     context.prd = `# Self-Improvement PRD\n\n## Requirement\n${requirement}\n\n## Context\nThis is the ADT codebase itself. Make the requested improvements while maintaining the existing architecture and conventions.\n\n## Acceptance Criteria\n- The requested improvement is implemented\n- Existing functionality is not broken\n- Code follows project conventions\n- npm run build succeeds`;
-    context.architecture = 'See existing codebase structure. Maintain current architecture patterns.';
+    context.architecture = `# ADT Architecture (Self-Improvement Baseline)
+
+## Core Boundaries
+- \`src/orchestrator.ts\` is the single coordinator for agent sequencing and quality gates.
+- All model calls must flow through the \`Provider\` interface in \`src/providers/provider.ts\`.
+- Agents remain independent modules under \`src/agents/\` with no cross-agent imports.
+
+## Agent Responsibilities
+- Requirements Engineer: clarifies requirement and produces PRD.
+- Architect: produces architecture guidance from PRD.
+- Developer: implements code changes in workspace-write mode.
+- Reviewer/QA/Security/Product Owner: evaluator gates with strict JSON scoring outputs.
+- Documentation Writer: produces customer-facing docs after approval.
+
+## Data Flow
+- Runtime documents are written to \`docs/\` (PRD, ARCHITECTURE, CUSTOMER_GUIDE).
+- Iteration feedback is aggregated by orchestrator and provided back to Developer.
+- Approval requires evaluator scores meeting configured threshold and no critical issues.
+
+## Invariants
+- Quality scores must be valid numbers in range 0-100.
+- Product Owner approval requires explicit boolean \`approved\`.
+- Self-improvement in non-interactive mode requires explicit consent.
+- Full-auto execution is opt-in and guarded by command policy checks.`;
 
     try {
-      const approved = process.stdin.isTTY
-        ? await askYesNo(
-            rl,
-            '   Self-improvement can edit repository files. Continue in safe trust mode?',
-          )
-        : true;
+      const trustLabel = context.developerTrustMode === 'high' ? 'full-auto trust mode' : 'safe trust mode';
+      const approved = await this.resolveSelfImproveApproval(rl, trustLabel);
       if (!approved) {
         log('🛑', 'Self-improvement cancelled by user.');
         return false;
       }
 
-      return await this.executeApprovedWorkflow(context, rl, 'Self-Improvement', runStartedAtMs);
+      return await this.runApprovedWorkflow(context, rl, 'Self-Improvement', runStartedAtMs);
     } finally {
       rl.close();
       await rm(runtimeDir, { recursive: true, force: true }).catch(() => {});
@@ -324,19 +352,211 @@ export class Orchestrator {
     return false;
   }
 
-  private async executeApprovedWorkflow(
+  private async postApprovalVerificationPhase(context: ProjectContext): Promise<boolean> {
+    const verificationPlan = await this.resolveVerificationChecks(context.workspaceDir);
+    if (verificationPlan.error) {
+      logStep('🧪 Post-Approval Verification');
+      log('🛑', 'Deterministic verification setup failed.');
+      logDetail(verificationPlan.error);
+      return false;
+    }
+
+    const checks = verificationPlan.checks;
+    if (checks.length === 0) {
+      logDetail('No deterministic post-approval verification checks found. Skipping.');
+      return true;
+    }
+
+    logStep('🧪 Post-Approval Verification');
+    for (const check of checks) {
+      log('🔧', `Running ${check.label}...`);
+      const result = await this.runVerificationCommand(
+        check.command,
+        check.args,
+        context.workspaceDir,
+      );
+
+      if (!result.success) {
+        log('🛑', `${check.label} failed.`);
+        if (result.details) {
+          logDetail(result.details);
+        }
+        return false;
+      }
+
+      logDetail(
+        `${check.label} passed in ${this.formatDuration(result.durationMs)}.`,
+      );
+    }
+
+    return true;
+  }
+
+  private async resolveVerificationChecks(
+    workspaceDir: string,
+  ): Promise<{ checks: VerificationCheck[]; error?: string }> {
+    const packageJsonPath = join(workspaceDir, 'package.json');
+    let packageJsonRaw: string;
+
+    try {
+      packageJsonRaw = await readFile(packageJsonPath, 'utf-8');
+    } catch {
+      return { checks: [] };
+    }
+
+    let parsedPackage: Record<string, unknown>;
+    try {
+      parsedPackage = JSON.parse(packageJsonRaw) as Record<string, unknown>;
+    } catch {
+      return { checks: [], error: `Invalid JSON in ${packageJsonPath}.` };
+    }
+
+    const checks: VerificationCheck[] = [];
+    const scripts = parsedPackage['scripts'];
+    const buildScript = scripts && typeof scripts === 'object'
+      ? (scripts as Record<string, unknown>)['build']
+      : undefined;
+
+    if (typeof buildScript === 'string' && buildScript.trim().length > 0) {
+      checks.push({
+        label: 'npm run build',
+        command: this.getNpmCommand(),
+        args: ['run', 'build'],
+      });
+    }
+
+    const cliPath = await this.resolveCliSmokeTarget(parsedPackage, workspaceDir);
+    if (cliPath) {
+      checks.push({
+        label: 'CLI smoke check (node dist/cli.js --help)',
+        command: process.execPath,
+        args: [cliPath, '--help'],
+      });
+    }
+
+    return { checks };
+  }
+
+  private async runVerificationCommand(
+    command: string,
+    args: string[],
+    cwd: string,
+  ): Promise<{ success: boolean; durationMs: number; details?: string }> {
+    return new Promise((resolvePromise) => {
+      const startedAt = Date.now();
+      const child = spawn(command, args, {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+      const maxOutputChars = 4000;
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout = this.appendVerificationOutput(stdout, chunk.toString(), maxOutputChars);
+      });
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr = this.appendVerificationOutput(stderr, chunk.toString(), maxOutputChars);
+      });
+
+      child.on('error', (error) => {
+        const details = `Failed to start "${command} ${args.join(' ')}": ${error.message}`;
+        resolvePromise({
+          success: false,
+          durationMs: Date.now() - startedAt,
+          details,
+        });
+      });
+
+      child.on('close', (code) => {
+        const durationMs = Date.now() - startedAt;
+        if (code === 0) {
+          resolvePromise({ success: true, durationMs });
+          return;
+        }
+
+        const renderedOutput = [stderr.trim(), stdout.trim()]
+          .filter(part => part.length > 0)
+          .join(' | ');
+        const details = renderedOutput.length > 0
+          ? `Exit code ${code}. ${renderedOutput}`
+          : `Exit code ${code}.`;
+
+        resolvePromise({
+          success: false,
+          durationMs,
+          details,
+        });
+      });
+    });
+  }
+
+  private appendVerificationOutput(current: string, next: string, maxChars: number): string {
+    const combined = current + next;
+    if (combined.length <= maxChars) {
+      return combined;
+    }
+    return combined.slice(0, maxChars);
+  }
+
+  private getNpmCommand(): string {
+    return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  }
+
+  private async resolveCliSmokeTarget(
+    parsedPackage: Record<string, unknown>,
+    workspaceDir: string,
+  ): Promise<string | null> {
+    const bin = parsedPackage['bin'];
+    if (typeof bin === 'string') {
+      return join(workspaceDir, bin);
+    }
+
+    if (bin && typeof bin === 'object') {
+      const entries = Object.values(bin as Record<string, unknown>);
+      for (const entry of entries) {
+        if (typeof entry === 'string') {
+          return join(workspaceDir, entry);
+        }
+      }
+    }
+
+    const fallback = join(workspaceDir, 'dist', 'cli.js');
+    const exists = await this.pathExists(fallback);
+    return exists ? fallback : null;
+  }
+
+  private async pathExists(path: string): Promise<boolean> {
+    try {
+      await access(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async runApprovedWorkflow(
     context: ProjectContext,
     rl: Interface | undefined,
     modeLabel: 'Development' | 'Self-Improvement',
     runStartedAtMs = Date.now(),
   ): Promise<boolean> {
     const poApproved = await this.developmentLoop(context, rl);
+    let verificationSuccess = true;
     let documentationSuccess = true;
 
     if (poApproved) {
-      documentationSuccess = await this.documentationPhase(context);
-      if (documentationSuccess) {
+      verificationSuccess = await this.postApprovalVerificationPhase(context);
+      if (verificationSuccess) {
+        documentationSuccess = await this.documentationPhase(context);
+      }
+
+      if (verificationSuccess && documentationSuccess) {
         logStep(`✅ ${modeLabel} Complete`);
+      } else if (!verificationSuccess) {
+        logStep(`⚠️ ${modeLabel} Failed During Verification`);
       } else {
         logStep(`⚠️ ${modeLabel} Failed During Documentation`);
       }
@@ -346,7 +566,7 @@ export class Orchestrator {
 
     this.logRunSummary(context, runStartedAtMs);
 
-    return poApproved && documentationSuccess;
+    return poApproved && verificationSuccess && documentationSuccess;
   }
 
   private async writeSpecDocuments(context: ProjectContext): Promise<void> {
@@ -385,18 +605,7 @@ export class Orchestrator {
       }
     }
 
-    return lastResult ?? {
-      success: false,
-      score: 0,
-      output: `${evaluatorName} did not produce an evaluation result.`,
-      evaluationValid: false,
-      issues: [
-        {
-          severity: 'critical',
-          description: `${evaluatorName} did not produce an evaluation result.`,
-        },
-      ],
-    };
+    return this.normalizedInvalidEvaluationResult(evaluatorName, lastResult);
   }
 
   private isValidEvaluationResult(result: AgentResult): boolean {
@@ -427,11 +636,47 @@ export class Orchestrator {
   }
 
   private belowThreshold(...results: AgentResult[]): boolean {
-    return results.some(r =>
-      typeof r.score !== 'number'
-      || !Number.isFinite(r.score)
-      || r.score < this.config.scoreThreshold
-    );
+    return results.some(r => {
+      if (!this.isValidEvaluationResult(r)) {
+        return true;
+      }
+
+      return (r.score ?? 0) < this.config.scoreThreshold;
+    });
+  }
+
+  private normalizedInvalidEvaluationResult(
+    evaluatorName: string,
+    lastResult: AgentResult | null,
+  ): AgentResult {
+    const reasons: string[] = [];
+
+    if (!lastResult) {
+      reasons.push('no result was returned');
+    } else {
+      if (lastResult.evaluationValid === false) {
+        reasons.push('evaluator marked output as invalid');
+      }
+      if (typeof lastResult.score !== 'number' || !Number.isFinite(lastResult.score)) {
+        reasons.push('score is missing or non-finite');
+      } else if (lastResult.score < 0 || lastResult.score > 100) {
+        reasons.push(`score ${lastResult.score} is outside 0-100`);
+      }
+    }
+
+    return {
+      success: false,
+      score: 0,
+      output: `${evaluatorName} produced invalid evaluation data after retries. ${reasons.join('; ') || 'Validation failed.'}`,
+      evaluationValid: false,
+      issues: [
+        {
+          severity: 'critical',
+          description: `${evaluatorName} produced invalid evaluation data after retries.`,
+          suggestion: 'Return strict JSON with score in range 0-100 and required fields.',
+        },
+      ],
+    };
   }
 
   private aggregateFeedback(
@@ -504,6 +749,52 @@ export class Orchestrator {
       security: [],
       productOwner: [],
     };
+  }
+
+  private createDefaultCommandPolicy(): CommandPolicy {
+    return {
+      allowedCommandPrefixes: [
+        'npm run build',
+        'npm run test',
+        'npm test',
+        'npm run lint',
+        'npm run typecheck',
+        'npx adt --help',
+        'node dist/cli.js --help',
+        'tsc',
+      ],
+      blockedCommandPatterns: [
+        '\\brm\\s+-rf\\b',
+        '\\bsudo\\b',
+        '\\bchown\\b',
+        '\\bchmod\\s+[0-7]{3,4}\\b',
+        '\\bgit\\s+reset\\s+--hard\\b',
+        '\\bgit\\s+push\\s+--force\\b',
+        '\\bgit\\s+rebase\\b',
+        '\\bcurl\\b',
+        '\\bwget\\b',
+        '\\bnc\\b',
+        '\\bscp\\b',
+        '\\brsync\\b',
+      ],
+    };
+  }
+
+  private async resolveSelfImproveApproval(rl: Interface, trustLabel: string): Promise<boolean> {
+    if (process.stdin.isTTY) {
+      return askYesNo(
+        rl,
+        `   Self-improvement can edit repository files. Continue in ${trustLabel}?`,
+      );
+    }
+
+    if (this.config.yesSelfImprove) {
+      logDetail('Non-interactive approval granted by --yes-self-improve.');
+      return true;
+    }
+
+    logDetail('Non-interactive self-improvement requires --yes-self-improve.');
+    return false;
   }
 
   private ensureScoreHistory(context: ProjectContext): ScoreHistory {

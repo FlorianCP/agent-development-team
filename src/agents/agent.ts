@@ -60,7 +60,7 @@ export abstract class Agent {
     };
   }
 
-  private invalidEvaluationResult(evaluatorName: string, reason: string, output: string): AgentResult {
+  protected invalidEvaluationResult(evaluatorName: string, reason: string, output: string): AgentResult {
     return {
       success: false,
       score: 0,
@@ -112,7 +112,10 @@ export abstract class Agent {
   }
 
   protected toUntrustedDataBlock(content: string): string {
-    const escaped = content.replaceAll('```', '` ` `');
+    const escaped = content
+      .replaceAll('<<<BEGIN_UNTRUSTED_DATA>>>', '<BEGIN_UNTRUSTED_DATA_ESCAPED>')
+      .replaceAll('<<<END_UNTRUSTED_DATA>>>', '<END_UNTRUSTED_DATA_ESCAPED>')
+      .replaceAll('```', '` ` `');
     return `<<<BEGIN_UNTRUSTED_DATA>>>\n${escaped}\n<<<END_UNTRUSTED_DATA>>>`;
   }
 

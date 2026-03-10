@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -46,7 +46,13 @@ function createPreparedContext(workspaceDir, maxIterations = 1) {
 }
 
 async function runApprovedWorkflow(orchestrator, context, modeLabel = 'Self-Improvement') {
-  return orchestrator.executeApprovedWorkflow(context, undefined, modeLabel);
+  const originalConsoleLog = console.log;
+  console.log = () => {};
+  try {
+    return await orchestrator.runApprovedWorkflow(context, undefined, modeLabel);
+  } finally {
+    console.log = originalConsoleLog;
+  }
 }
 
 test('fails run when max iterations reached with critical/below-threshold issues', async () => {
@@ -155,6 +161,42 @@ test('fails quality gate when evaluator output is malformed JSON', async () => {
   }
 });
 
+test('fails quality gate when evaluator score is out of range across retries', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
+  let reviewerCalls = 0;
+  let poCalled = false;
+
+  try {
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) return 'Implemented changes.';
+      if (prompt.includes('senior Code Reviewer')) {
+        reviewerCalls++;
+        return jsonBlock({ score: 150, summary: 'Out-of-range score.', issues: [] });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 95, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 95, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        poCalled = true;
+        return jsonBlock({ score: 95, approved: true, summary: 'PO approved.', issues: [] });
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+
+    assert.equal(success, false);
+    assert.equal(reviewerCalls, 2);
+    assert.equal(poCalled, false);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test('halts iteration when developer requests human approval marker', async () => {
   const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
   let reviewCalled = false;
@@ -176,6 +218,36 @@ test('halts iteration when developer requests human approval marker', async () =
 
     assert.equal(success, false);
     assert.equal(reviewCalled, false);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('treats missing product-owner approved flag as invalid evaluation', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
+
+  try {
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) return 'Implemented changes.';
+      if (prompt.includes('senior Code Reviewer')) {
+        return jsonBlock({ score: 95, summary: 'Review passed.', issues: [] });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 95, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 95, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 99, summary: 'Looks good but no explicit approval.', issues: [] });
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+
+    assert.equal(success, false);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -212,6 +284,109 @@ test('shared development wrapper propagates documentation failure in development
       'Development',
     );
     assert.equal(success, false);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('fails run when deterministic post-approval build verification fails', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
+  let docsCalled = false;
+
+  try {
+    await writeFile(
+      join(outputDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-fail-fixture',
+        version: '1.0.0',
+        scripts: {
+          build: 'node -e "process.exit(1)"',
+        },
+      }, null, 2),
+      'utf-8',
+    );
+
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) return 'Implemented changes.';
+      if (prompt.includes('senior Code Reviewer')) {
+        return jsonBlock({ score: 95, summary: 'Review passed.', issues: [] });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 95, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 95, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 95, approved: true, summary: 'PO approved.', issues: [] });
+      }
+      if (prompt.includes('senior Documentation Writer')) {
+        docsCalled = true;
+        return '# Customer Guide';
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir), 'Development');
+
+    assert.equal(success, false);
+    assert.equal(docsCalled, false);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('passes run when post-approval build and smoke checks succeed', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
+
+  try {
+    await writeFile(
+      join(outputDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-pass-fixture',
+        version: '1.0.0',
+        bin: {
+          adt: './dist/cli.js',
+        },
+        scripts: {
+          build: 'node -e "process.exit(0)"',
+        },
+      }, null, 2),
+      'utf-8',
+    );
+
+    await mkdir(join(outputDir, 'dist'), { recursive: true });
+    await writeFile(
+      join(outputDir, 'dist', 'cli.js'),
+      '#!/usr/bin/env node\nprocess.exit(process.argv.includes(\"--help\") ? 0 : 1);\n',
+      'utf-8',
+    );
+
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) return 'Implemented changes.';
+      if (prompt.includes('senior Code Reviewer')) {
+        return jsonBlock({ score: 95, summary: 'Review passed.', issues: [] });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 95, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 95, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 95, approved: true, summary: 'PO approved.', issues: [] });
+      }
+      if (prompt.includes('senior Documentation Writer')) {
+        return '# Customer Guide';
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir), 'Development');
+
+    assert.equal(success, true);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

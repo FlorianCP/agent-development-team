@@ -1,22 +1,23 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { createReadStream, constants as fsConstants } from 'node:fs';
 import {
   access,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
-  realpath,
 } from 'node:fs/promises';
-import { dirname, delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
 import type { Provider, ProviderOptions } from './provider.js';
 
 interface CodexProviderConfig {
   codexPath?: string;
   defaultTimeoutMs?: number;
+  trustedInstallDirs?: string[];
 }
 
 type CodexErrorCode =
@@ -24,7 +25,20 @@ type CodexErrorCode =
   | 'BINARY_VALIDATION_FAILED'
   | 'SPAWN_FAILED'
   | 'NON_ZERO_EXIT'
-  | 'TIMEOUT';
+  | 'TIMEOUT'
+  | 'COMMAND_POLICY_VIOLATION'
+  | 'SECRET_LEAK_DETECTED';
+
+interface EffectiveCommandPolicy {
+  allowedPrefixes: string[];
+  blockedPatterns: RegExp[];
+}
+
+interface CommandTelemetryAudit {
+  telemetrySeen: boolean;
+  ambiguousCommandEvents: number;
+  executedCommands: string[];
+}
 
 class CodexExecutionError extends Error {
   code: CodexErrorCode;
@@ -41,17 +55,34 @@ class CodexExecutionError extends Error {
 export class CodexProvider implements Provider {
   name = 'codex';
 
+  private static readonly DEFAULT_TRUSTED_INSTALL_DIRS = process.platform === 'win32'
+    ? [
+        'C:\\Program Files\\Codex',
+        'C:\\Program Files\\nodejs',
+      ]
+    : [
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        '/usr/bin',
+        '/bin',
+      ];
+
   private model?: string;
   private readonly codexBinaryPathPromise: Promise<string>;
   private readonly defaultTimeoutMs: number;
   private readonly debugOutput: boolean;
+  private readonly trustedInstallDirs: string[];
 
   constructor(model?: string, config?: CodexProviderConfig) {
     this.model = model;
-    this.defaultTimeoutMs = config?.defaultTimeoutMs ?? 900000;
+    this.defaultTimeoutMs = config?.defaultTimeoutMs ?? 3600000;
     this.debugOutput = process.env['ADT_DEBUG'] === '1';
-    this.codexBinaryPathPromise = config?.codexPath
-      ? this.validateCodexBinary(config.codexPath)
+    this.trustedInstallDirs = (config?.trustedInstallDirs ?? CodexProvider.DEFAULT_TRUSTED_INSTALL_DIRS)
+      .map(dir => resolve(dir));
+
+    const explicitPath = config?.codexPath ?? process.env['ADT_CODEX_PATH'];
+    this.codexBinaryPathPromise = explicitPath
+      ? this.validateCodexBinary(explicitPath, false)
       : this.resolveCodexBinaryPath();
   }
 
@@ -60,6 +91,11 @@ export class CodexProvider implements Provider {
     const outputFile = join(tmpDir, `output-${randomBytes(4).toString('hex')}.md`);
     const promptFile = join(tmpDir, `prompt-${randomBytes(4).toString('hex')}.md`);
 
+    const isHighTrust = options?.trustMode === 'high';
+    const commandPolicy = isHighTrust
+      ? this.prepareCommandPolicy(options?.commandPolicy)
+      : undefined;
+
     try {
       await writeFile(promptFile, prompt, 'utf-8');
 
@@ -67,8 +103,8 @@ export class CodexProvider implements Provider {
       const sandbox = options?.sandbox ?? 'read-only';
       args.push('-s', sandbox);
 
-      if (options?.trustMode === 'high') {
-        args.push('--full-auto');
+      if (isHighTrust) {
+        args.push('--full-auto', '--json');
       }
 
       if (options?.workingDir) {
@@ -92,14 +128,19 @@ export class CodexProvider implements Provider {
         promptFile,
         timeoutMs,
         workingDir: options?.workingDir,
+        providerOptions: options,
+        commandPolicy,
       });
 
+      let finalOutput: string;
       try {
-        return await readFile(outputFile, 'utf-8');
+        finalOutput = await readFile(outputFile, 'utf-8');
       } catch {
         // If no output file was created, use stdout.
-        return output;
+        finalOutput = output;
       }
+
+      return this.guardAgainstSecretLeak(finalOutput);
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -111,13 +152,23 @@ export class CodexProvider implements Provider {
     promptFile: string;
     timeoutMs: number;
     workingDir?: string;
+    providerOptions?: ProviderOptions;
+    commandPolicy?: EffectiveCommandPolicy;
   }): Promise<string> {
-    const { codexBinaryPath, args, promptFile, timeoutMs, workingDir } = params;
+    const {
+      codexBinaryPath,
+      args,
+      promptFile,
+      timeoutMs,
+      workingDir,
+      providerOptions,
+      commandPolicy,
+    } = params;
 
     return new Promise((resolvePromise, rejectPromise) => {
       const child = spawn(codexBinaryPath, args, {
         cwd: workingDir,
-        env: this.createSpawnEnv(codexBinaryPath),
+        env: this.createSpawnEnv(codexBinaryPath, providerOptions),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -126,6 +177,7 @@ export class CodexProvider implements Provider {
       let timedOut = false;
       let exited = false;
       let killTimeoutHandle: NodeJS.Timeout | null = null;
+      const telemetryCollector = commandPolicy ? new CommandTelemetryCollector() : null;
 
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
@@ -139,7 +191,9 @@ export class CodexProvider implements Provider {
       }, timeoutMs);
 
       child.stdout.on('data', (data: Buffer) => {
-        stdout = this.appendOutput(stdout, data.toString());
+        const chunk = data.toString();
+        stdout = this.appendOutput(stdout, chunk);
+        telemetryCollector?.ingest(chunk);
       });
 
       child.stderr.on('data', (data: Buffer) => {
@@ -177,26 +231,39 @@ export class CodexProvider implements Provider {
           return;
         }
 
-        if (code === 0) {
-          resolvePromise(stdout);
+        if (code !== 0) {
+          rejectPromise(
+            new CodexExecutionError(
+              `codex exec exited with code ${code}. ${this.formatOutputSummary(stdout, stderr)}`,
+              'NON_ZERO_EXIT',
+              {
+                exitCode: code,
+                ...(this.debugOutput
+                  ? {
+                      stdout: this.redactAndTruncate(stdout),
+                      stderr: this.redactAndTruncate(stderr),
+                    }
+                  : {}),
+              },
+            ),
+          );
           return;
         }
 
-        rejectPromise(
-          new CodexExecutionError(
-            `codex exec exited with code ${code}. ${this.formatOutputSummary(stdout, stderr)}`,
-            'NON_ZERO_EXIT',
-            {
-              exitCode: code,
-              ...(this.debugOutput
-                ? {
-                    stdout: this.redactAndTruncate(stdout),
-                    stderr: this.redactAndTruncate(stderr),
-                  }
-                : {}),
-            },
-          ),
-        );
+        if (commandPolicy && telemetryCollector) {
+          telemetryCollector.finalize();
+          try {
+            this.enforceHighTrustCommandPolicy(
+              telemetryCollector.buildAudit(),
+              commandPolicy,
+            );
+          } catch (error) {
+            rejectPromise(error);
+            return;
+          }
+        }
+
+        resolvePromise(stdout);
       });
 
       child.on('error', (error) => {
@@ -234,9 +301,7 @@ export class CodexProvider implements Provider {
   private redactAndTruncate(value: string, maxChars = 1200): string {
     if (!value) return '';
 
-    let sanitized = value
-      .replace(/sk-[a-zA-Z0-9_-]{12,}/g, '[REDACTED_TOKEN]')
-      .replace(/(api[_-]?key\s*[:=]\s*)([^\s]+)/gi, '$1[REDACTED]');
+    let sanitized = this.sanitizeSecrets(value);
 
     if (sanitized.length > maxChars) {
       sanitized = `${sanitized.slice(0, maxChars)}... [truncated]`;
@@ -245,7 +310,60 @@ export class CodexProvider implements Provider {
     return sanitized.replace(/\s+/g, ' ').trim();
   }
 
-  private createSpawnEnv(codexBinaryPath: string): NodeJS.ProcessEnv {
+  private sanitizeSecrets(value: string): string {
+    return value
+      .replace(/-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]')
+      .replace(/\bsk-[a-zA-Z0-9_-]{20,}\b/g, '[REDACTED_TOKEN]')
+      .replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b/g, '[REDACTED_TOKEN]')
+      .replace(/\bBearer\s+[A-Za-z0-9\-._~+/=]{20,}\b/gi, 'Bearer [REDACTED]')
+      .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}\b/g, '[REDACTED_JWT]')
+      .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|password|secret)\s*[:=]\s*(['"]?)[^\s'"]{12,}\2/gi, '$1=[REDACTED]');
+  }
+
+  private guardAgainstSecretLeak(value: string): string {
+    const leakedSecretKey = this.findLeakedEnvironmentSecretKey(value);
+    if (leakedSecretKey) {
+      throw new CodexExecutionError(
+        `Provider output leaked exact value for environment secret ${leakedSecretKey}.`,
+        'SECRET_LEAK_DETECTED',
+        this.debugOutput
+          ? { redactedExcerpt: this.redactAndTruncate(value, 400) }
+          : undefined,
+      );
+    }
+
+    if (/-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/.test(value)) {
+      throw new CodexExecutionError(
+        'Provider output leaked private key material.',
+        'SECRET_LEAK_DETECTED',
+        this.debugOutput
+          ? { redactedExcerpt: this.redactAndTruncate(value, 400) }
+          : undefined,
+      );
+    }
+
+    return this.sanitizeSecrets(value);
+  }
+
+  private findLeakedEnvironmentSecretKey(output: string): string | null {
+    for (const [envKey, envValue] of Object.entries(process.env)) {
+      if (!envValue || envValue.length < 12 || /\s/.test(envValue)) {
+        continue;
+      }
+
+      if (!/(key|token|secret|password)/i.test(envKey)) {
+        continue;
+      }
+
+      if (output.includes(envValue)) {
+        return envKey;
+      }
+    }
+
+    return null;
+  }
+
+  private createSpawnEnv(codexBinaryPath: string, options?: ProviderOptions): NodeJS.ProcessEnv {
     const allowedKeys = [
       'HOME',
       'USER',
@@ -259,7 +377,6 @@ export class CodexProvider implements Provider {
       'TEMP',
       'XDG_CONFIG_HOME',
       'XDG_CACHE_HOME',
-      'OPENAI_API_KEY',
       'OPENAI_BASE_URL',
       'HTTP_PROXY',
       'HTTPS_PROXY',
@@ -277,7 +394,99 @@ export class CodexProvider implements Provider {
       }
     }
 
+    const exposeSecrets = options?.allowSecretEnv ?? false;
+    if (exposeSecrets) {
+      const openAiKey = process.env['OPENAI_API_KEY'];
+      if (openAiKey !== undefined) {
+        env['OPENAI_API_KEY'] = openAiKey;
+      }
+    }
+
     return env;
+  }
+
+  private prepareCommandPolicy(policy?: ProviderOptions['commandPolicy']): EffectiveCommandPolicy {
+    if (!policy) {
+      throw new CodexExecutionError(
+        'High-trust execution requires an explicit command policy.',
+        'COMMAND_POLICY_VIOLATION',
+      );
+    }
+
+    const allowedPrefixes = policy.allowedCommandPrefixes
+      .map(prefix => this.normalizeCommand(prefix))
+      .filter(prefix => prefix.length > 0);
+
+    if (allowedPrefixes.length === 0) {
+      throw new CodexExecutionError(
+        'High-trust execution requires at least one allowed command prefix.',
+        'COMMAND_POLICY_VIOLATION',
+      );
+    }
+
+    const blockedPatterns = policy.blockedCommandPatterns.map((pattern) => {
+      try {
+        return new RegExp(pattern, 'i');
+      } catch {
+        throw new CodexExecutionError(
+          `Invalid blocked command policy pattern: ${pattern}`,
+          'COMMAND_POLICY_VIOLATION',
+        );
+      }
+    });
+
+    return {
+      allowedPrefixes,
+      blockedPatterns,
+    };
+  }
+
+  private enforceHighTrustCommandPolicy(
+    audit: CommandTelemetryAudit,
+    policy: EffectiveCommandPolicy,
+  ): void {
+    if (!audit.telemetrySeen) {
+      throw new CodexExecutionError(
+        'High-trust execution failed: command telemetry was unavailable. Failing closed.',
+        'COMMAND_POLICY_VIOLATION',
+      );
+    }
+
+    if (audit.ambiguousCommandEvents > 0) {
+      throw new CodexExecutionError(
+        'High-trust execution failed: command telemetry was incomplete for one or more command events.',
+        'COMMAND_POLICY_VIOLATION',
+        { ambiguousCommandEvents: audit.ambiguousCommandEvents },
+      );
+    }
+
+    for (const command of audit.executedCommands) {
+      const normalized = this.normalizeCommand(command);
+
+      for (const blockedPattern of policy.blockedPatterns) {
+        if (blockedPattern.test(normalized)) {
+          throw new CodexExecutionError(
+            `Blocked command policy matched executed command: ${command}`,
+            'COMMAND_POLICY_VIOLATION',
+          );
+        }
+      }
+
+      const allowed = policy.allowedPrefixes.some(
+        prefix => normalized === prefix || normalized.startsWith(`${prefix} `),
+      );
+
+      if (!allowed) {
+        throw new CodexExecutionError(
+          `Command policy rejected executed command: ${command}`,
+          'COMMAND_POLICY_VIOLATION',
+        );
+      }
+    }
+  }
+
+  private normalizeCommand(command: string): string {
+    return command.trim().replace(/\s+/g, ' ').toLowerCase();
   }
 
   private restrictedPath(codexBinaryPath: string): string {
@@ -309,13 +518,15 @@ export class CodexProvider implements Provider {
 
     const pathEntries = (process.env['PATH'] ?? '')
       .split(delimiter)
-      .filter(entry => entry.trim().length > 0);
+      .map(entry => entry.trim())
+      .filter(entry => entry.length > 0)
+      .filter(entry => this.isTrustedInstallDirectory(entry));
 
     for (const entry of pathEntries) {
       for (const commandName of commandNames) {
         const candidate = resolve(entry, commandName);
         try {
-          const validated = await this.validateCodexBinary(candidate);
+          const validated = await this.validateCodexBinary(candidate, true);
           return validated;
         } catch (error) {
           if (error instanceof CodexExecutionError) {
@@ -330,12 +541,29 @@ export class CodexProvider implements Provider {
     }
 
     throw new CodexExecutionError(
-      'Unable to locate codex executable in PATH.',
+      'Unable to locate a trusted codex executable in PATH. Set ADT_CODEX_PATH to a pinned binary path.',
       'BINARY_NOT_FOUND',
     );
   }
 
-  private async validateCodexBinary(candidatePath: string): Promise<string> {
+  private isTrustedInstallDirectory(pathEntry: string): boolean {
+    const normalized = resolve(pathEntry);
+    return this.trustedInstallDirs.some((trustedDir) => (
+      normalized === trustedDir || normalized.startsWith(`${trustedDir}${sep}`)
+    ));
+  }
+
+  private isTrustedInstallPath(binaryPath: string): boolean {
+    const normalized = resolve(binaryPath);
+    return this.trustedInstallDirs.some((trustedDir) => (
+      normalized === trustedDir || normalized.startsWith(`${trustedDir}${sep}`)
+    ));
+  }
+
+  private async validateCodexBinary(
+    candidatePath: string,
+    requireTrustedInstallPath: boolean,
+  ): Promise<string> {
     try {
       await access(candidatePath, fsConstants.X_OK);
     } catch {
@@ -351,6 +579,13 @@ export class CodexProvider implements Provider {
     if (!fileStats.isFile()) {
       throw new CodexExecutionError(
         `Codex path is not a file: ${resolvedPath}`,
+        'BINARY_VALIDATION_FAILED',
+      );
+    }
+
+    if (requireTrustedInstallPath && !this.isTrustedInstallPath(resolvedPath)) {
+      throw new CodexExecutionError(
+        `Refusing codex binary outside trusted install directories: ${resolvedPath}`,
         'BINARY_VALIDATION_FAILED',
       );
     }
@@ -374,5 +609,200 @@ export class CodexProvider implements Provider {
     }
 
     return resolvedPath;
+  }
+}
+
+class CommandTelemetryCollector {
+  private buffer = '';
+  private telemetrySeen = false;
+  private ambiguousCommandEvents = 0;
+  private readonly commands = new Set<string>();
+
+  ingest(chunk: string): void {
+    this.buffer += chunk;
+
+    let newlineIndex = this.buffer.indexOf('\n');
+    while (newlineIndex >= 0) {
+      const line = this.buffer.slice(0, newlineIndex);
+      this.buffer = this.buffer.slice(newlineIndex + 1);
+      this.processTelemetryLine(line);
+      newlineIndex = this.buffer.indexOf('\n');
+    }
+  }
+
+  finalize(): void {
+    const trailing = this.buffer.trim();
+    if (trailing.length > 0) {
+      this.processTelemetryLine(trailing);
+    }
+    this.buffer = '';
+  }
+
+  buildAudit(): CommandTelemetryAudit {
+    return {
+      telemetrySeen: this.telemetrySeen,
+      ambiguousCommandEvents: this.ambiguousCommandEvents,
+      executedCommands: Array.from(this.commands),
+    };
+  }
+
+  private processTelemetryLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) {
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+
+    this.telemetrySeen = true;
+    const commands = this.extractCommands(payload);
+    for (const command of commands) {
+      this.commands.add(command);
+    }
+
+    if (this.looksLikeCommandExecutionEvent(payload) && commands.length === 0) {
+      this.ambiguousCommandEvents++;
+    }
+  }
+
+  private extractCommands(payload: unknown): string[] {
+    const extracted: string[] = [];
+    this.walkForCommands(payload, [], extracted);
+
+    const deduped = new Set<string>();
+    for (const command of extracted) {
+      const normalized = command.trim().replace(/\s+/g, ' ');
+      if (normalized.length > 0) {
+        deduped.add(normalized);
+      }
+    }
+
+    return Array.from(deduped);
+  }
+
+  private walkForCommands(value: unknown, path: string[], out: string[]): void {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        this.walkForCommands(item, path, out);
+      }
+      return;
+    }
+
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    for (const [key, child] of Object.entries(record)) {
+      const lowerKey = key.toLowerCase();
+      const nextPath = [...path, lowerKey];
+
+      if (lowerKey === 'argv' && Array.isArray(child) && child.every(part => typeof part === 'string')) {
+        const command = (child as string[]).join(' ').trim();
+        if (this.looksLikeShellCommand(command)) {
+          out.push(command);
+        }
+      }
+
+      if (typeof child === 'string') {
+        if (this.isDirectCommandField(lowerKey)) {
+          this.collectCommandLines(child, out);
+        }
+
+        if (lowerKey === 'arguments' || lowerKey === 'input') {
+          this.collectCommandsFromSerializedArguments(child, out);
+        }
+      }
+
+      this.walkForCommands(child, nextPath, out);
+    }
+  }
+
+  private isDirectCommandField(fieldName: string): boolean {
+    return fieldName === 'command'
+      || fieldName === 'cmd'
+      || fieldName === 'raw_command'
+      || fieldName === 'shell_command';
+  }
+
+  private collectCommandsFromSerializedArguments(raw: string, out: string[]): void {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      for (const key of ['command', 'cmd', 'raw_command', 'shell_command']) {
+        const candidate = parsed[key];
+        if (typeof candidate === 'string') {
+          this.collectCommandLines(candidate, out);
+        }
+      }
+      const argv = parsed['argv'];
+      if (Array.isArray(argv) && argv.every(part => typeof part === 'string')) {
+        this.collectCommandLines((argv as string[]).join(' '), out);
+      }
+    } catch {
+      // Ignore non-JSON argument payloads.
+    }
+  }
+
+  private collectCommandLines(raw: string, out: string[]): void {
+    for (const line of raw.split(/\r?\n/)) {
+      const candidate = line.trim().replace(/^\$\s+/, '');
+      if (!candidate || candidate.startsWith('#')) {
+        continue;
+      }
+      if (this.looksLikeShellCommand(candidate)) {
+        out.push(candidate);
+      }
+    }
+  }
+
+  private looksLikeShellCommand(value: string): boolean {
+    const [firstToken] = value.trim().split(/\s+/, 1);
+    if (!firstToken) {
+      return false;
+    }
+    return /^[a-zA-Z0-9._/-]+$/.test(firstToken);
+  }
+
+  private looksLikeCommandExecutionEvent(payload: unknown): boolean {
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+
+    const record = payload as Record<string, unknown>;
+    const typeHints = [
+      record['type'],
+      record['name'],
+      this.readNestedString(record, 'item', 'type'),
+      this.readNestedString(record, 'item', 'name'),
+      this.readNestedString(record, 'item', 'tool_name'),
+    ].filter((value): value is string => typeof value === 'string');
+
+    if (typeHints.some(value => /(shell|command|exec|tool_call|run)/i.test(value))) {
+      return true;
+    }
+
+    return 'command' in record || 'cmd' in record || 'argv' in record;
+  }
+
+  private readNestedString(record: Record<string, unknown>, ...path: string[]): string | undefined {
+    let current: unknown = record;
+    for (const key of path) {
+      if (!current || typeof current !== 'object') {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[key];
+    }
+
+    return typeof current === 'string' ? current : undefined;
   }
 }

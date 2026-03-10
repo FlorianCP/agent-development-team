@@ -71,6 +71,8 @@ ADT can work on its own codebase:
 npm run start -- self-improve "add support for parallel agent execution"
 ```
 
+For non-interactive runs, pass `--yes-self-improve` to explicitly allow repository edits.
+
 Use `npm run start -- ...` (or `node dist/cli.js ...`) when running from this repository.
 Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 
@@ -82,8 +84,10 @@ Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 | `--model <model>` | (provider default) | Model for the provider |
 | `--max-iterations <n>` | `5` | Max development loop iterations |
 | `--threshold <n>` | `80` | Minimum quality score (0-100) |
-| `--provider-timeout-ms <n>` | `600000` | Timeout per provider call in milliseconds |
+| `--provider-timeout-ms <n>` | `3600000` | Timeout per provider call in milliseconds |
 | `--output-dir <dir>` | `./output` | Where to create projects |
+| `--full-auto` | `false` | Opt into autonomous developer execution (`--full-auto`) |
+| `--yes-self-improve` | `false` | Required for non-interactive self-improvement runs |
 | `--allow-external-prd` | `false` | Allow `--prd` paths outside current workspace |
 
 ## Agent Roles
@@ -129,6 +133,27 @@ src/
 - **Orchestrator ownership**: Only the orchestrator sequences agents and manages data flow.
 - **File-based context**: Agents share context through files in the workspace directory (PRD, architecture doc, code), not in-memory state.
 - **Zero runtime dependencies**: Uses only Node.js built-in modules.
+
+## Runtime Metrics
+
+During each run, ADT logs:
+- Per-agent execution time (`Developer completed in ...`)
+- Iteration progress (`Development Iteration 2/5`)
+- Score trends across iterations (`Review: 60→75→88`)
+- End-of-run summary (`Iterations: ...`, `Total time: ...`)
+
+Example console output:
+
+```text
+🔄 Development Iteration 3/5
+   Developer completed in 8.2s.
+   Code Reviewer completed in 2.3s.
+   QA Engineer completed in 1.9s.
+   Security Engineer completed in 2.1s.
+   Score trends -> Review: 60→75→88 | QA: 70→82→90 | Security: 64→78→86
+📊 Iterations: 3
+⏱️ Total time: 1m 12.4s
+```
 
 ### Adding a Provider
 

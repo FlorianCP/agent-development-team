@@ -83,7 +83,7 @@ test('logs score trends, agent timings, and total runtime summary', async () => 
     };
 
     try {
-      const success = await orchestrator.executeApprovedWorkflow(
+      const success = await orchestrator.runApprovedWorkflow(
         context,
         undefined,
         'Self-Improvement',

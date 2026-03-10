@@ -4,6 +4,8 @@ export interface ProviderOptions {
   sandbox?: 'read-only' | 'workspace-write';
   timeoutMs?: number;
   trustMode?: 'safe' | 'high';
+  commandPolicy?: CommandPolicy;
+  allowSecretEnv?: boolean;
 }
 
 export interface Provider {
@@ -26,6 +28,11 @@ export interface Issue {
   suggestion?: string;
 }
 
+export interface CommandPolicy {
+  allowedCommandPrefixes: string[];
+  blockedCommandPatterns: string[];
+}
+
 export interface ProjectContext {
   requirement: string;
   prd?: string;
@@ -36,6 +43,7 @@ export interface ProjectContext {
   maxIterations: number;
   feedback: string[];
   developerTrustMode?: ProviderOptions['trustMode'];
+  developerCommandPolicy?: CommandPolicy;
   metrics?: RunMetrics;
 }
 
@@ -46,6 +54,8 @@ export interface ADTConfig {
   scoreThreshold: number;
   outputDir: string;
   providerTimeoutMs: number;
+  allowFullAuto: boolean;
+  yesSelfImprove: boolean;
 }
 
 export interface RunMetrics {
@@ -64,5 +74,7 @@ export const DEFAULT_CONFIG: ADTConfig = {
   maxIterations: 5,
   scoreThreshold: 80,
   outputDir: './output',
-  providerTimeoutMs: 900000,
+  providerTimeoutMs: 3600000,
+  allowFullAuto: false,
+  yesSelfImprove: false,
 };

@@ -1,0 +1,1 @@
+See existing codebase structure. Maintain current architecture patterns.

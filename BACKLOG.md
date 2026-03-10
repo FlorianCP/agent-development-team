@@ -6,15 +6,17 @@ Impact scores: **Critical** = foundational / unlocks many things, **High** = sig
 
 ## Observability & Reporting
 
-- **Runtime Info** — Run output on console shows how many iterations were needed and how long it took to complete the project. `Impact: Medium`
+- 🏗️ **Runtime Info** — Run output on console shows how many iterations were needed and how long it took to complete the project. `Impact: Medium`
+
+- 🏗️ **Structured Score Tracking** — Track and display score trends across iterations (e.g. "Review: 60→75→88") so the human can see convergence or stalling. `Impact: Medium`
+
+- **Runtime per Iteration** — Track and display how long each iteration takes. `Impact: Low`
 
 - **Customer Brief** — PO creates a customer brief with a summary of the final product, decisions made, quality scores, the number of iterations it took, how long it took to complete the project, and any known issues or limitations. `Impact: High`
 
 - **Logs / Auditability** — Trace logs are kept for all agent interactions, including prompts, outputs, and decisions made at each step. This allows for auditing and understanding the development process. `Impact: High`
 
 - **Reports** — Reports of each agent for each run are saved in a Markdown file in the output directory, so the customer can review the PRD, architecture, code quality feedback, QA results, security findings, and final approval notes. `Impact: High`
-
-- **Structured Score Tracking** — Track and display score trends across iterations (e.g. "Review: 60→75→88") so the human can see convergence or stalling. `Impact: Medium`
 
 - **Progress Events / Callbacks** — Emit structured events (agent-started, agent-completed, iteration-started, etc.) that a future dashboard, web UI, or CI integration could consume. `Impact: High`
 

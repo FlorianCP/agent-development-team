@@ -69,7 +69,8 @@ Implement the complete solution. Create all necessary files.`;
     const output = await this.callProvider(prompt, {
       workingDir: context.workspaceDir,
       sandbox: 'workspace-write',
-      trustMode: context.developerTrustMode ?? 'high',
+      trustMode: context.developerTrustMode ?? 'safe',
+      commandPolicy: context.developerCommandPolicy,
     });
 
     return {

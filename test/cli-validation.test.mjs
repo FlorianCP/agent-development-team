@@ -56,3 +56,9 @@ test('rejects external --prd file unless explicitly allowed', async () => {
     await rm(externalDir, { recursive: true, force: true });
   }
 });
+
+test('requires --yes-self-improve for non-interactive self-improvement runs', () => {
+  const result = runCli(['self-improve', 'tighten security defaults']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /requires --yes-self-improve/i);
+});
