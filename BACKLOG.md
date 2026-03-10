@@ -29,7 +29,7 @@ Legend:
 
 - **Progress Events / Callbacks** — Emit structured events (agent-started, agent-completed, iteration-started, etc.) that a future dashboard, web UI, or CI integration could consume. `Impact: High`
 
-- **Cost Tracking** — Track and display token usage / API cost per run if the provider exposes that information. `Impact: Low`
+- **Cost Tracking** — Track and display token usage / API cost per run if the provider exposes that information. Also include that information in the final report. `Impact: Low`
 
 ---
 
