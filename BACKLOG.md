@@ -19,7 +19,7 @@ Legend:
 
 - ✅ **Structured Score Tracking** — Track and display score trends across iterations (e.g. "Review: 60→75→88") so the human can see convergence or stalling. `Impact: Medium`
 
-- 🏗️ **Runtime per Iteration** — Track and display how long each complete iteration takes (dev -> review -> QA -> security -> done or next iteration). `Impact: Low`
+- ✅ **Runtime per Iteration** — Track and display how long each complete iteration takes (dev -> review -> QA -> security -> done or next iteration). `Impact: Low`
 
 - **Customer Brief** — PO creates a customer brief with a summary of the final product, decisions made, quality scores, the number of iterations it took, how long it took to complete the project, and any known issues or limitations. `Impact: High`
 
