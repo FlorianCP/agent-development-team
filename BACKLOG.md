@@ -27,7 +27,7 @@ Legend:
 
 - **Logs / Auditability** — Trace logs are kept for all agent interactions, including prompts, outputs, and decisions made at each step. This allows for auditing and understanding the development process. `Impact: High`
 
-- **Reviewer Finding Reports** — After each iteration, the Code Reviewer, QA Engineer, and Security Engineer each write a structured Markdown report of their findings (grouped by severity: critical, major, minor, info) to a persistent artifacts directory (e.g. `docs/reviews/iteration-N-reviewer.md`). Reports accumulate across iterations so the developer, PO, and human can trace how issues were found and resolved. `Impact: High`
+- ➡️ **Reviewer Finding Reports** — After each iteration, the Code Reviewer, QA Engineer, and Security Engineer each write a structured Markdown report of their findings (grouped by severity: critical, major, minor, info) to a persistent artifacts directory (e.g. `docs/reviews/iteration-N-reviewer.md`). Reports accumulate across iterations so the developer, PO, and human can trace how issues were found and resolved. `Impact: High`
 
 - **Reports** — Reports of each agent for each run are saved in a Markdown file in the output directory, so the customer can review the PRD, architecture, code quality feedback, QA results, security findings, and final approval notes. `Impact: High`
 
@@ -42,6 +42,8 @@ Legend:
 - ✅ **Provider: Codex CLI** - Add a way to configure the used model and the reasoning effort for Codex CLI via a local configuration file. Add a default configuration file which uses gpt-5.3-codex with reasoning effort high. Update documentation accordingly. `Impact: High`
 
 - **Provider: Claude Code** — Implement the Provider interface for Anthropic's Claude via the claude CLI, expanding model choice beyond Codex. `Impact: High`
+
+- **Provider: OpenCode** — Implement the Provider interface for OpenCode, enabling use of models from various providers through one CLI. `Impact: Medium`
 
 - **Provider: OpenRouter** — Implement the Provider interface for OpenRouter, enabling access to many models through one API. `Impact: Medium`
 
@@ -65,7 +67,7 @@ Legend:
 
 ## Quality & Reliability
 
-- 🏗️ **Agent Output Validation** — Validate that agent JSON responses parse correctly; retry the agent once if output is malformed instead of failing the run. `Impact: High`
+- ✅ **Agent Output Validation** — Validate that agent JSON responses parse correctly; retry the agent once if output is malformed instead of failing the run. `Impact: High`
 
 - **Timeout Handling** — Add configurable timeouts per agent call so a stuck provider call doesn't hang forever. `Impact: Medium`
 
