@@ -82,7 +82,7 @@ Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 | `--model <model>` | (provider default) | Model for the provider |
 | `--max-iterations <n>` | `5` | Max development loop iterations |
 | `--threshold <n>` | `80` | Minimum quality score (0-100) |
-| `--provider-timeout-ms <n>` | `300000` | Timeout per provider call in milliseconds |
+| `--provider-timeout-ms <n>` | `600000` | Timeout per provider call in milliseconds |
 | `--output-dir <dir>` | `./output` | Where to create projects |
 | `--allow-external-prd` | `false` | Allow `--prd` paths outside current workspace |
 

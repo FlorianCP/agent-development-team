@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
-import type { ADTConfig, AgentResult, ProjectContext } from './types.js';
+import type { ADTConfig, AgentResult, ProjectContext, ScoreHistory } from './types.js';
 import { RequirementsEngineer } from './agents/requirements-engineer.js';
 import { Architect } from './agents/architect.js';
 import { Developer } from './agents/developer.js';
@@ -24,6 +24,7 @@ export class Orchestrator {
   }
 
   async start(requirement: string): Promise<boolean> {
+    const runStartedAtMs = Date.now();
     const projectName = this.generateProjectName(requirement);
     const workspaceDir = resolve(this.config.outputDir, projectName);
     const docsDir = join(workspaceDir, 'docs');
@@ -38,6 +39,9 @@ export class Orchestrator {
       maxIterations: this.config.maxIterations,
       feedback: [],
       developerTrustMode: 'high',
+      metrics: {
+        scoreHistory: this.createScoreHistory(),
+      },
     };
 
     console.log('\n🤖 Agent Development Team v0.1.0');
@@ -60,11 +64,7 @@ export class Orchestrator {
         return false;
       }
 
-      const success = await this.executeApprovedWorkflow(context, rl, 'Development');
-
-      log('📁', `Output: ${workspaceDir}`);
-      log('📊', `Iterations: ${context.iteration}`);
-      return success;
+      return await this.executeApprovedWorkflow(context, rl, 'Development', runStartedAtMs);
 
     } finally {
       rl.close();
@@ -72,6 +72,7 @@ export class Orchestrator {
   }
 
   async selfImprove(requirement: string): Promise<boolean> {
+    const runStartedAtMs = Date.now();
     const workspaceDir = resolve('.');
     const runtimeDir = join(
       workspaceDir,
@@ -89,6 +90,9 @@ export class Orchestrator {
       maxIterations: this.config.maxIterations,
       feedback: [],
       developerTrustMode: 'safe',
+      metrics: {
+        scoreHistory: this.createScoreHistory(),
+      },
     };
 
     console.log('\n🤖 Agent Development Team — Self-Improvement Mode');
@@ -112,7 +116,7 @@ export class Orchestrator {
         return false;
       }
 
-      return await this.executeApprovedWorkflow(context, rl, 'Self-Improvement');
+      return await this.executeApprovedWorkflow(context, rl, 'Self-Improvement', runStartedAtMs);
     } finally {
       rl.close();
       await rm(runtimeDir, { recursive: true, force: true }).catch(() => {});
@@ -125,7 +129,10 @@ export class Orchestrator {
     const reAgent = new RequirementsEngineer(this.provider);
 
     log('🔍', 'Analyzing requirement and generating questions...');
-    const questions = await reAgent.generateQuestions(context);
+    const questions = await this.runTimedAgent(
+      'Requirements Engineer (question analysis)',
+      () => reAgent.generateQuestions(context),
+    );
 
     console.log('\n   I have some clarifying questions:\n');
     const answers = new Map<string, string>();
@@ -142,7 +149,10 @@ export class Orchestrator {
     }
 
     log('\n🔨', 'Creating Product Requirements Document...');
-    context.prd = await reAgent.createPRD(context, answers);
+    context.prd = await this.runTimedAgent(
+      'Requirements Engineer (PRD generation)',
+      () => reAgent.createPRD(context, answers),
+    );
     log('✅', 'PRD created.');
   }
 
@@ -152,7 +162,7 @@ export class Orchestrator {
     const archAgent = new Architect(this.provider);
     log('🔍', 'Designing system architecture...');
 
-    const result = await archAgent.execute(context);
+    const result = await this.runTimedAgent('Architect', () => archAgent.execute(context));
     context.architecture = result.output;
 
     log('✅', 'Architecture document created.');
@@ -169,6 +179,7 @@ export class Orchestrator {
   }
 
   private async developmentLoop(context: ProjectContext, rl?: Interface): Promise<boolean> {
+    const scoreHistory = this.ensureScoreHistory(context);
     const devAgent = new Developer(this.provider);
     const reviewAgent = new Reviewer(this.provider);
     const qaAgent = new QAEngineer(this.provider);
@@ -181,7 +192,7 @@ export class Orchestrator {
 
       // Develop
       log('👨‍💻', 'Developing...');
-      const devResult = await devAgent.execute(context);
+      const devResult = await this.runTimedAgent('Developer', () => devAgent.execute(context));
       log('✅', 'Code written.');
 
       const approvalReason = this.extractHumanApprovalRequest(devResult.output);
@@ -202,29 +213,41 @@ export class Orchestrator {
 
       // Review
       log('🔍', 'Reviewing code...');
-      const review = await this.runEvaluatorWithRetry(
+      const review = await this.runTimedAgent(
         'Code Reviewer',
-        () => reviewAgent.execute(context),
+        () => this.runEvaluatorWithRetry(
+          'Code Reviewer',
+          () => reviewAgent.execute(context),
+        ),
       );
       logDetail(`Review score: ${review.score ?? 'N/A'}/100`);
+      this.recordScore(scoreHistory.review, review.score);
       this.logIssueCount(review);
 
       // QA
       log('🧪', 'Running QA checks...');
-      const qa = await this.runEvaluatorWithRetry(
+      const qa = await this.runTimedAgent(
         'QA Engineer',
-        () => qaAgent.execute(context),
+        () => this.runEvaluatorWithRetry(
+          'QA Engineer',
+          () => qaAgent.execute(context),
+        ),
       );
       logDetail(`QA score: ${qa.score ?? 'N/A'}/100`);
+      this.recordScore(scoreHistory.qa, qa.score);
       this.logIssueCount(qa);
 
       // Security
       log('🔒', 'Security scanning...');
-      const security = await this.runEvaluatorWithRetry(
+      const security = await this.runTimedAgent(
         'Security Engineer',
-        () => securityAgent.execute(context),
+        () => this.runEvaluatorWithRetry(
+          'Security Engineer',
+          () => securityAgent.execute(context),
+        ),
       );
       logDetail(`Security score: ${security.score ?? 'N/A'}/100`);
+      this.recordScore(scoreHistory.security, security.score);
       this.logIssueCount(security);
 
       // Check for critical issues
@@ -239,9 +262,11 @@ export class Orchestrator {
             { name: 'Security Engineer', result: security },
           );
           context.feedback.push(feedback);
+          this.logScoreTrends(scoreHistory);
           log('⚠️', `Issues found. Starting iteration ${context.iteration + 1}...`);
           continue;
         } else {
+          this.logScoreTrends(scoreHistory);
           log('🛑', 'Max iterations reached with unresolved critical/quality issues. Failing run.');
           logDetail('Product Owner review skipped because quality gate was not met.');
           return false;
@@ -250,11 +275,16 @@ export class Orchestrator {
 
       // PO Review
       log('👔', 'Product Owner review...');
-      const poResult = await this.runEvaluatorWithRetry(
+      const poResult = await this.runTimedAgent(
         'Product Owner',
-        () => poAgent.execute(context),
+        () => this.runEvaluatorWithRetry(
+          'Product Owner',
+          () => poAgent.execute(context),
+        ),
       );
       logDetail(`PO score: ${poResult.score ?? 'N/A'}/100`);
+      this.recordScore(scoreHistory.productOwner, poResult.score);
+      this.logScoreTrends(scoreHistory);
 
       if (poResult.success) {
         log('✅', 'Product Owner approved!');
@@ -279,7 +309,10 @@ export class Orchestrator {
     const documentationWriter = new DocumentationWriter(this.provider);
     log('📝', 'Generating customer documentation...');
 
-    const result = await documentationWriter.execute(context);
+    const result = await this.runTimedAgent(
+      'Documentation Writer',
+      () => documentationWriter.execute(context),
+    );
     if (result.success) {
       log('✅', 'Customer documentation created.');
       logDetail(result.output);
@@ -295,6 +328,7 @@ export class Orchestrator {
     context: ProjectContext,
     rl: Interface | undefined,
     modeLabel: 'Development' | 'Self-Improvement',
+    runStartedAtMs = Date.now(),
   ): Promise<boolean> {
     const poApproved = await this.developmentLoop(context, rl);
     let documentationSuccess = true;
@@ -309,6 +343,8 @@ export class Orchestrator {
     } else {
       logStep(`⚠️ ${modeLabel} Finished With Outstanding Issues`);
     }
+
+    this.logRunSummary(context, runStartedAtMs);
 
     return poApproved && documentationSuccess;
   }
@@ -446,6 +482,103 @@ export class Orchestrator {
       if (counts.info > 0) parts.push(`${counts.info} info`);
       logDetail(`Issues: ${parts.join(', ')}`);
     }
+  }
+
+  private async runTimedAgent<T>(agentName: string, run: () => Promise<T>): Promise<T> {
+    const startedAtMs = Date.now();
+
+    try {
+      const result = await run();
+      logDetail(`${agentName} completed in ${this.formatDuration(Date.now() - startedAtMs)}.`);
+      return result;
+    } catch (error) {
+      logDetail(`${agentName} failed after ${this.formatDuration(Date.now() - startedAtMs)}.`);
+      throw error;
+    }
+  }
+
+  private createScoreHistory(): ScoreHistory {
+    return {
+      review: [],
+      qa: [],
+      security: [],
+      productOwner: [],
+    };
+  }
+
+  private ensureScoreHistory(context: ProjectContext): ScoreHistory {
+    if (!context.metrics) {
+      context.metrics = {
+        scoreHistory: this.createScoreHistory(),
+      };
+    } else if (!context.metrics.scoreHistory) {
+      context.metrics.scoreHistory = this.createScoreHistory();
+    }
+
+    return context.metrics.scoreHistory;
+  }
+
+  private recordScore(history: number[], score: number | undefined): void {
+    if (typeof score === 'number' && Number.isFinite(score)) {
+      history.push(score);
+    }
+  }
+
+  private logScoreTrends(scoreHistory: ScoreHistory): void {
+    const trendParts = [
+      `Review: ${this.formatScoreTrend(scoreHistory.review)}`,
+      `QA: ${this.formatScoreTrend(scoreHistory.qa)}`,
+      `Security: ${this.formatScoreTrend(scoreHistory.security)}`,
+    ];
+
+    if (scoreHistory.productOwner.length > 0) {
+      trendParts.push(`PO: ${this.formatScoreTrend(scoreHistory.productOwner)}`);
+    }
+
+    logDetail(`Score trends -> ${trendParts.join(' | ')}`);
+  }
+
+  private formatScoreTrend(scores: number[]): string {
+    if (scores.length === 0) {
+      return 'N/A';
+    }
+
+    return scores.map(score => this.formatScore(score)).join('→');
+  }
+
+  private formatScore(score: number): string {
+    if (Number.isInteger(score)) {
+      return String(score);
+    }
+
+    const rounded = score.toFixed(1);
+    return rounded.endsWith('.0') ? rounded.slice(0, -2) : rounded;
+  }
+
+  private logRunSummary(context: ProjectContext, runStartedAtMs: number): void {
+    const scoreHistory = this.ensureScoreHistory(context);
+    log('📁', `Output: ${context.workspaceDir}`);
+    log('📊', `Iterations: ${context.iteration}`);
+    log('⏱️', `Total time: ${this.formatDuration(Date.now() - runStartedAtMs)}`);
+
+    if (scoreHistory.review.length > 0 || scoreHistory.qa.length > 0 || scoreHistory.security.length > 0) {
+      this.logScoreTrends(scoreHistory);
+    }
+  }
+
+  private formatDuration(durationMs: number): string {
+    if (durationMs < 1000) {
+      return `${Math.round(durationMs)}ms`;
+    }
+
+    const totalSeconds = durationMs / 1000;
+    if (totalSeconds < 60) {
+      return `${totalSeconds.toFixed(1)}s`;
+    }
+
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds - minutes * 60;
+    return `${minutes}m ${seconds.toFixed(1)}s`;
   }
 
   private generateProjectName(requirement: string): string {

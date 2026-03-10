@@ -22,7 +22,7 @@ Options:
   --model <model>      Model to use with the provider
   --max-iterations <n> Max development iterations (default: 5)
   --threshold <n>      Minimum quality score 0-100 (default: 80)
-  --provider-timeout-ms <n> Timeout per provider call in milliseconds (default: 300000)
+  --provider-timeout-ms <n> Timeout per provider call in milliseconds (default: 600000)
   --output-dir <dir>   Output directory (default: ./output)
   --allow-external-prd Allow --prd files outside the current workspace
   --help, -h           Show this help message

@@ -48,7 +48,7 @@ export class CodexProvider implements Provider {
 
   constructor(model?: string, config?: CodexProviderConfig) {
     this.model = model;
-    this.defaultTimeoutMs = config?.defaultTimeoutMs ?? 300000;
+    this.defaultTimeoutMs = config?.defaultTimeoutMs ?? 900000;
     this.debugOutput = process.env['ADT_DEBUG'] === '1';
     this.codexBinaryPathPromise = config?.codexPath
       ? this.validateCodexBinary(config.codexPath)

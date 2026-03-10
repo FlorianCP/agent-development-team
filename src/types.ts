@@ -36,6 +36,7 @@ export interface ProjectContext {
   maxIterations: number;
   feedback: string[];
   developerTrustMode?: ProviderOptions['trustMode'];
+  metrics?: RunMetrics;
 }
 
 export interface ADTConfig {
@@ -47,10 +48,21 @@ export interface ADTConfig {
   providerTimeoutMs: number;
 }
 
+export interface RunMetrics {
+  scoreHistory: ScoreHistory;
+}
+
+export interface ScoreHistory {
+  review: number[];
+  qa: number[];
+  security: number[];
+  productOwner: number[];
+}
+
 export const DEFAULT_CONFIG: ADTConfig = {
   provider: 'codex',
   maxIterations: 5,
   scoreThreshold: 80,
   outputDir: './output',
-  providerTimeoutMs: 300000,
+  providerTimeoutMs: 900000,
 };
