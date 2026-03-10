@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -87,6 +87,22 @@ test('fails run when max iterations reached with critical/below-threshold issues
 
     assert.equal(success, false);
     assert.equal(poCalled, false);
+    const reportPath = join(outputDir, '.test-docs', 'ITERATION_REPORT.md');
+    const report = await readFile(reportPath, 'utf-8');
+    assert.match(report, /# Iteration Report/);
+    assert.match(report, /Max iterations reached \(1\/1\)/);
+    assert.match(report, /## Final Scores/);
+    assert.match(report, /Code Reviewer: 92\/100/);
+    assert.match(report, /QA Engineer: 95\/100/);
+    assert.match(report, /Security Engineer: 95\/100/);
+    assert.match(report, /Product Owner: N\/A/);
+    assert.match(report, /## Score Trends/);
+    assert.match(report, /Code Reviewer: 92/);
+    assert.match(report, /QA Engineer: 95/);
+    assert.match(report, /Security Engineer: 95/);
+    assert.match(report, /### Critical/);
+    assert.match(report, /\[Code Reviewer\] Unsafe behavior\./);
+    assert.match(report, /## Recommendation/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -248,6 +264,11 @@ test('treats missing product-owner approved flag as invalid evaluation', async (
     const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
 
     assert.equal(success, false);
+    const reportPath = join(outputDir, '.test-docs', 'ITERATION_REPORT.md');
+    const report = await readFile(reportPath, 'utf-8');
+    assert.match(report, /Product Owner: 0\/100/);
+    assert.match(report, /### Critical/);
+    assert.match(report, /\[Product Owner\] Product Owner produced invalid evaluation data after retries\./);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

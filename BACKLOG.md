@@ -21,6 +21,8 @@ Legend:
 
 - ✅ **Runtime per Iteration** — Track and display how long each complete iteration takes (dev -> review -> QA -> security -> done or next iteration). `Impact: Low`
 
+- **Console Output for All Pipeline Agents** — Requirements Engineer, Architect, and Product Owner currently produce no status output or timing on the console. They should display the same status + time-taken style output as Developer, Reviewer, QA, and Security (e.g. " Requirements Engineer completed in 1m 12.0s."). `Impact: Medium`
+
 - **Customer Brief** — PO creates a customer brief with a summary of the final product, decisions made, quality scores, the number of iterations it took, how long it took to complete the project, and any known issues or limitations. `Impact: High`
 
 - **Logs / Auditability** — Trace logs are kept for all agent interactions, including prompts, outputs, and decisions made at each step. This allows for auditing and understanding the development process. `Impact: High`

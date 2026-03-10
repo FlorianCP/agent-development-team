@@ -329,6 +329,15 @@ export class Orchestrator {
           this.logScoreTrends(scoreHistory);
           log('🛑', 'Max iterations reached with unresolved critical/quality issues. Failing run.');
           logDetail('Product Owner review skipped because quality gate was not met.');
+          await this.publishIterationReport(
+            context,
+            scoreHistory,
+            [
+              { name: 'Code Reviewer', result: review },
+              { name: 'QA Engineer', result: qa },
+              { name: 'Security Engineer', result: security },
+            ],
+          );
           this.completeIteration(
             iterationDurations,
             context.iteration,
@@ -375,6 +384,16 @@ export class Orchestrator {
       } else {
         log('⚠️', 'Max iterations reached. Review output manually.');
         logDetail(`PO feedback: ${poResult.output}`);
+        await this.publishIterationReport(
+          context,
+          scoreHistory,
+          [
+            { name: 'Code Reviewer', result: review },
+            { name: 'QA Engineer', result: qa },
+            { name: 'Security Engineer', result: security },
+            { name: 'Product Owner', result: poResult },
+          ],
+        );
         this.completeIteration(
           iterationDurations,
           context.iteration,
@@ -768,6 +787,150 @@ export class Orchestrator {
     }
 
     return sections.join('\n\n');
+  }
+
+  private async publishIterationReport(
+    context: ProjectContext,
+    scoreHistory: ScoreHistory,
+    evaluations: Array<{ name: string; result: AgentResult }>,
+  ): Promise<void> {
+    const report = this.renderIterationReport(context, scoreHistory, evaluations);
+    const reportPath = join(context.docsDir, 'ITERATION_REPORT.md');
+
+    await mkdir(context.docsDir, { recursive: true });
+    await writeFile(reportPath, report, 'utf-8');
+
+    log('📄', 'Iteration report generated (max iterations reached).');
+    logDetail(`Report: ${reportPath}`);
+    console.log(`\n${report}\n`);
+  }
+
+  private renderIterationReport(
+    context: ProjectContext,
+    scoreHistory: ScoreHistory,
+    evaluations: Array<{ name: string; result: AgentResult }>,
+  ): string {
+    const finalScores = [
+      this.formatFinalScoreLine('Code Reviewer', evaluations),
+      this.formatFinalScoreLine('QA Engineer', evaluations),
+      this.formatFinalScoreLine('Security Engineer', evaluations),
+      this.formatFinalScoreLine('Product Owner', evaluations),
+    ];
+
+    const trends = [
+      `- Code Reviewer: ${this.formatScoreTrend(scoreHistory.review)}`,
+      `- QA Engineer: ${this.formatScoreTrend(scoreHistory.qa)}`,
+      `- Security Engineer: ${this.formatScoreTrend(scoreHistory.security)}`,
+      `- Product Owner: ${this.formatScoreTrend(scoreHistory.productOwner)}`,
+    ];
+
+    const groupedIssues = this.groupIssuesBySeverity(evaluations);
+    const unresolvedIssueSection = this.renderGroupedIssues(groupedIssues);
+    const recommendation = this.recommendNextFocus(evaluations);
+
+    return [
+      '# Iteration Report',
+      '',
+      `- Status: Max iterations reached (${context.iteration}/${context.maxIterations})`,
+      `- Threshold: ${this.config.scoreThreshold}/100`,
+      '',
+      '## Final Scores',
+      ...finalScores,
+      '',
+      '## Score Trends',
+      ...trends,
+      '',
+      '## Remaining Unresolved Issues By Severity',
+      unresolvedIssueSection,
+      '',
+      '## Recommendation',
+      recommendation,
+    ].join('\n');
+  }
+
+  private formatFinalScoreLine(
+    evaluatorName: string,
+    evaluations: Array<{ name: string; result: AgentResult }>,
+  ): string {
+    const evaluation = evaluations.find(item => item.name === evaluatorName);
+    const score = evaluation?.result.score;
+    if (typeof score !== 'number' || !Number.isFinite(score)) {
+      return `- ${evaluatorName}: N/A`;
+    }
+
+    return `- ${evaluatorName}: ${this.formatScore(score)}/100`;
+  }
+
+  private groupIssuesBySeverity(
+    evaluations: Array<{ name: string; result: AgentResult }>,
+  ): Record<'critical' | 'major' | 'minor' | 'info', string[]> {
+    const grouped: Record<'critical' | 'major' | 'minor' | 'info', string[]> = {
+      critical: [],
+      major: [],
+      minor: [],
+      info: [],
+    };
+
+    for (const { name, result } of evaluations) {
+      for (const issue of result.issues ?? []) {
+        const location = issue.file ? ` (${issue.file})` : '';
+        const suggestion = issue.suggestion ? ` -> ${issue.suggestion}` : '';
+        grouped[issue.severity].push(`[${name}] ${issue.description}${location}${suggestion}`);
+      }
+    }
+
+    return grouped;
+  }
+
+  private renderGroupedIssues(
+    grouped: Record<'critical' | 'major' | 'minor' | 'info', string[]>,
+  ): string {
+    const labels: Array<{ severity: 'critical' | 'major' | 'minor' | 'info'; label: string }> = [
+      { severity: 'critical', label: '### Critical' },
+      { severity: 'major', label: '### Major' },
+      { severity: 'minor', label: '### Minor' },
+      { severity: 'info', label: '### Info' },
+    ];
+
+    const sections: string[] = [];
+    for (const { severity, label } of labels) {
+      sections.push(label);
+      if (grouped[severity].length === 0) {
+        sections.push('- None');
+      } else {
+        sections.push(...grouped[severity].map(issue => `- ${issue}`));
+      }
+      sections.push('');
+    }
+
+    return sections.join('\n').trimEnd();
+  }
+
+  private recommendNextFocus(
+    evaluations: Array<{ name: string; result: AgentResult }>,
+  ): string {
+    const hasCritical = evaluations.some(
+      ({ result }) => result.issues?.some(issue => issue.severity === 'critical') ?? false,
+    );
+    if (hasCritical) {
+      return 'Resolve all critical issues first, then re-run quality gates.';
+    }
+
+    const scored = evaluations
+      .filter(({ result }) => typeof result.score === 'number' && Number.isFinite(result.score))
+      .sort((a, b) => (a.result.score ?? 100) - (b.result.score ?? 100));
+
+    if (scored.length > 0 && (scored[0].result.score ?? 100) < this.config.scoreThreshold) {
+      const weakest = scored[0];
+      return `Improve ${weakest.name} outcomes first (${this.formatScore(weakest.result.score ?? 0)}/100 vs threshold ${this.config.scoreThreshold}/100).`;
+    }
+
+    const poResult = evaluations.find(item => item.name === 'Product Owner')?.result;
+    if (poResult && !poResult.success) {
+      return 'Address Product Owner feedback and acceptance criteria gaps before requesting approval again.';
+    }
+
+    return 'Focus on remaining major and minor issues, then run another full validation pass.';
   }
 
   private logIssueCount(result: AgentResult): void {

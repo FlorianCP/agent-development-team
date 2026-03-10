@@ -616,7 +616,11 @@ export class CodexProvider implements Provider {
       }
     }
 
-    return resolvedPath;
+    // Return the original (symlink) path, not the resolved path.
+    // The OS resolves symlinks at exec time, so if codex is updated
+    // mid-run (e.g. brew upgrade), the symlink will point to the new
+    // binary rather than a stale Caskroom version directory.
+    return candidatePath;
   }
 }
 
