@@ -1,0 +1,23 @@
+{
+  "name": "agent-dev-team",
+  "version": "0.1.0",
+  "description": "Autonomous AI agent team for software development",
+  "type": "module",
+  "bin": {
+    "adt": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": ["ai", "agents", "development", "autonomous"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
