@@ -97,6 +97,19 @@ Each agent has a specific role, expertise, and set of responsibilities. Agents c
 **Input:** Code in the project workspace, PRD, all review/QA/security reports.
 **Output:** Approval or rejection with specific feedback per requirement.
 
+### Documentation Writer
+
+**Role:** Create concise, customer-facing documentation for delivered software.
+
+**Responsibilities:**
+- Review the implemented code and PRD to capture what was built
+- Produce brief setup and usage instructions for customers
+- Summarize key features and important limitations or notes
+- Keep documentation clear, practical, and high signal
+
+**Input:** Code in the project workspace, PRD.
+**Output:** Customer documentation artifact (for example `docs/CUSTOMER_GUIDE.md`).
+
 ## Agent Independence
 
 Each agent operates independently and is not aware of other agents. The orchestrator provides each agent with the context it needs and collects its output. This design allows agents to be improved, replaced, or extended without affecting others.

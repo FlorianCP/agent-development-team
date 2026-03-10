@@ -1,5 +1,7 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
 import type { ADTConfig, AgentResult, ProjectContext } from './types.js';
 import { RequirementsEngineer } from './agents/requirements-engineer.js';
@@ -9,6 +11,7 @@ import { Reviewer } from './agents/reviewer.js';
 import { QAEngineer } from './agents/qa.js';
 import { SecurityEngineer } from './agents/security.js';
 import { ProductOwner } from './agents/product-owner.js';
+import { DocumentationWriter } from './agents/documentation-writer.js';
 import { createReadlineInterface, askQuestion, askYesNo, log, logStep, logDetail } from './utils.js';
 
 export class Orchestrator {
@@ -20,18 +23,21 @@ export class Orchestrator {
     this.config = config;
   }
 
-  async start(requirement: string): Promise<void> {
+  async start(requirement: string): Promise<boolean> {
     const projectName = this.generateProjectName(requirement);
     const workspaceDir = resolve(this.config.outputDir, projectName);
+    const docsDir = join(workspaceDir, 'docs');
 
     await mkdir(workspaceDir, { recursive: true });
 
     const context: ProjectContext = {
       requirement,
+      docsDir,
       workspaceDir,
       iteration: 0,
       maxIterations: this.config.maxIterations,
       feedback: [],
+      developerTrustMode: 'high',
     };
 
     console.log('\n🤖 Agent Development Team v0.1.0');
@@ -51,45 +57,66 @@ export class Orchestrator {
       const approved = await this.approvalPhase(context, rl);
       if (!approved) {
         log('🛑', 'Development cancelled by user.');
-        rl.close();
-        return;
+        return false;
       }
 
-      // Phase 4: Development Loop
-      await this.developmentLoop(context);
+      const success = await this.executeApprovedWorkflow(context, rl, 'Development');
 
-      // Done
-      logStep('✅ Development Complete');
       log('📁', `Output: ${workspaceDir}`);
       log('📊', `Iterations: ${context.iteration}`);
+      return success;
 
     } finally {
       rl.close();
     }
   }
 
-  async selfImprove(requirement: string): Promise<void> {
+  async selfImprove(requirement: string): Promise<boolean> {
     const workspaceDir = resolve('.');
+    const runtimeDir = join(
+      workspaceDir,
+      '.adt-self-improve',
+      `${Date.now()}-${randomBytes(3).toString('hex')}`,
+    );
+    const docsDir = join(runtimeDir, 'docs');
+    const rl = createReadlineInterface();
 
     const context: ProjectContext = {
       requirement: `Improve the Agent Development Team (ADT) codebase. The codebase is a TypeScript project in the current directory. ${requirement}`,
+      docsDir,
       workspaceDir,
       iteration: 0,
       maxIterations: this.config.maxIterations,
       feedback: [],
+      developerTrustMode: 'safe',
     };
 
     console.log('\n🤖 Agent Development Team — Self-Improvement Mode');
     console.log('═'.repeat(60));
     log('📁', `Working on: ${workspaceDir}`);
+    log('📄', `Using runtime docs: ${docsDir}`);
 
     // Skip requirements/architecture for self-improvement — go straight to development
     context.prd = `# Self-Improvement PRD\n\n## Requirement\n${requirement}\n\n## Context\nThis is the ADT codebase itself. Make the requested improvements while maintaining the existing architecture and conventions.\n\n## Acceptance Criteria\n- The requested improvement is implemented\n- Existing functionality is not broken\n- Code follows project conventions\n- npm run build succeeds`;
     context.architecture = 'See existing codebase structure. Maintain current architecture patterns.';
 
-    await this.developmentLoop(context);
+    try {
+      const approved = process.stdin.isTTY
+        ? await askYesNo(
+            rl,
+            '   Self-improvement can edit repository files. Continue in safe trust mode?',
+          )
+        : true;
+      if (!approved) {
+        log('🛑', 'Self-improvement cancelled by user.');
+        return false;
+      }
 
-    logStep('✅ Self-Improvement Complete');
+      return await this.executeApprovedWorkflow(context, rl, 'Self-Improvement');
+    } finally {
+      rl.close();
+      await rm(runtimeDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   private async requirementsPhase(context: ProjectContext, rl: import('node:readline').Interface): Promise<void> {
@@ -133,28 +160,15 @@ export class Orchestrator {
 
   private async approvalPhase(context: ProjectContext, rl: import('node:readline').Interface): Promise<boolean> {
     logStep('📄 Review Documents');
-
-    // Write documents for human review
-    const docsDir = join(context.workspaceDir, 'docs');
-    await mkdir(docsDir, { recursive: true });
-
-    if (context.prd) {
-      const prdPath = join(docsDir, 'PRD.md');
-      await writeFile(prdPath, context.prd, 'utf-8');
-      logDetail(`PRD: ${prdPath}`);
-    }
-
-    if (context.architecture) {
-      const archPath = join(docsDir, 'ARCHITECTURE.md');
-      await writeFile(archPath, context.architecture, 'utf-8');
-      logDetail(`Architecture: ${archPath}`);
-    }
+    await this.writeSpecDocuments(context);
+    logDetail(`PRD: ${join(context.docsDir, 'PRD.md')}`);
+    logDetail(`Architecture: ${join(context.docsDir, 'ARCHITECTURE.md')}`);
 
     console.log('');
     return askYesNo(rl, '   Approve and begin development?');
   }
 
-  private async developmentLoop(context: ProjectContext): Promise<void> {
+  private async developmentLoop(context: ProjectContext, rl?: Interface): Promise<boolean> {
     const devAgent = new Developer(this.provider);
     const reviewAgent = new Reviewer(this.provider);
     const qaAgent = new QAEngineer(this.provider);
@@ -167,24 +181,49 @@ export class Orchestrator {
 
       // Develop
       log('👨‍💻', 'Developing...');
-      await devAgent.execute(context);
+      const devResult = await devAgent.execute(context);
       log('✅', 'Code written.');
+
+      const approvalReason = this.extractHumanApprovalRequest(devResult.output);
+      if (approvalReason) {
+        log('🛑', 'Developer requested explicit human approval before continuing.');
+        logDetail(approvalReason);
+        if (!rl || !process.stdin.isTTY) {
+          return false;
+        }
+        const continueAutomatedChecks = await askYesNo(
+          rl,
+          '   Complete the manual step, then continue automated review gates?',
+        );
+        if (!continueAutomatedChecks) {
+          return false;
+        }
+      }
 
       // Review
       log('🔍', 'Reviewing code...');
-      const review = await reviewAgent.execute(context);
+      const review = await this.runEvaluatorWithRetry(
+        'Code Reviewer',
+        () => reviewAgent.execute(context),
+      );
       logDetail(`Review score: ${review.score ?? 'N/A'}/100`);
       this.logIssueCount(review);
 
       // QA
       log('🧪', 'Running QA checks...');
-      const qa = await qaAgent.execute(context);
+      const qa = await this.runEvaluatorWithRetry(
+        'QA Engineer',
+        () => qaAgent.execute(context),
+      );
       logDetail(`QA score: ${qa.score ?? 'N/A'}/100`);
       this.logIssueCount(qa);
 
       // Security
       log('🔒', 'Security scanning...');
-      const security = await securityAgent.execute(context);
+      const security = await this.runEvaluatorWithRetry(
+        'Security Engineer',
+        () => securityAgent.execute(context),
+      );
       logDetail(`Security score: ${security.score ?? 'N/A'}/100`);
       this.logIssueCount(security);
 
@@ -199,18 +238,23 @@ export class Orchestrator {
           log('⚠️', `Issues found. Starting iteration ${context.iteration + 1}...`);
           continue;
         } else {
-          log('⚠️', 'Max iterations reached with remaining issues.');
+          log('🛑', 'Max iterations reached with unresolved critical/quality issues. Failing run.');
+          logDetail('Product Owner review skipped because quality gate was not met.');
+          return false;
         }
       }
 
       // PO Review
       log('👔', 'Product Owner review...');
-      const poResult = await poAgent.execute(context);
+      const poResult = await this.runEvaluatorWithRetry(
+        'Product Owner',
+        () => poAgent.execute(context),
+      );
       logDetail(`PO score: ${poResult.score ?? 'N/A'}/100`);
 
       if (poResult.success) {
         log('✅', 'Product Owner approved!');
-        return;
+        return true;
       }
 
       if (context.iteration < context.maxIterations) {
@@ -221,6 +265,119 @@ export class Orchestrator {
         logDetail(`PO feedback: ${poResult.output}`);
       }
     }
+
+    return false;
+  }
+
+  private async documentationPhase(context: ProjectContext): Promise<boolean> {
+    logStep('📝 Documentation');
+
+    const documentationWriter = new DocumentationWriter(this.provider);
+    log('📝', 'Generating customer documentation...');
+
+    const result = await documentationWriter.execute(context);
+    if (result.success) {
+      log('✅', 'Customer documentation created.');
+      logDetail(result.output);
+      return true;
+    }
+
+    log('🛑', 'Customer documentation generation failed.');
+    logDetail(result.output);
+    return false;
+  }
+
+  private async executeApprovedWorkflow(
+    context: ProjectContext,
+    rl: Interface | undefined,
+    modeLabel: 'Development' | 'Self-Improvement',
+  ): Promise<boolean> {
+    const poApproved = await this.developmentLoop(context, rl);
+    let documentationSuccess = true;
+
+    if (poApproved) {
+      documentationSuccess = await this.documentationPhase(context);
+      if (documentationSuccess) {
+        logStep(`✅ ${modeLabel} Complete`);
+      } else {
+        logStep(`⚠️ ${modeLabel} Failed During Documentation`);
+      }
+    } else {
+      logStep(`⚠️ ${modeLabel} Finished With Outstanding Issues`);
+    }
+
+    return poApproved && documentationSuccess;
+  }
+
+  private async writeSpecDocuments(context: ProjectContext): Promise<void> {
+    await mkdir(context.docsDir, { recursive: true });
+
+    if (context.prd) {
+      await writeFile(join(context.docsDir, 'PRD.md'), context.prd, 'utf-8');
+    }
+
+    if (context.architecture) {
+      await writeFile(join(context.docsDir, 'ARCHITECTURE.md'), context.architecture, 'utf-8');
+    }
+  }
+
+  private async runEvaluatorWithRetry(
+    evaluatorName: string,
+    evaluate: () => Promise<AgentResult>,
+  ): Promise<AgentResult> {
+    const maxAttempts = 2;
+    let lastResult: AgentResult | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await evaluate();
+      lastResult = result;
+
+      if (this.isValidEvaluationResult(result)) {
+        return result;
+      }
+
+      log(
+        '⚠️',
+        `${evaluatorName} returned invalid evaluation data (attempt ${attempt}/${maxAttempts}).`,
+      );
+      if (attempt < maxAttempts) {
+        logDetail('Retrying evaluator once...');
+      }
+    }
+
+    return lastResult ?? {
+      success: false,
+      score: 0,
+      output: `${evaluatorName} did not produce an evaluation result.`,
+      evaluationValid: false,
+      issues: [
+        {
+          severity: 'critical',
+          description: `${evaluatorName} did not produce an evaluation result.`,
+        },
+      ],
+    };
+  }
+
+  private isValidEvaluationResult(result: AgentResult): boolean {
+    if (result.evaluationValid === false) {
+      return false;
+    }
+
+    if (typeof result.score !== 'number' || !Number.isFinite(result.score)) {
+      return false;
+    }
+
+    return result.score >= 0 && result.score <= 100;
+  }
+
+  private extractHumanApprovalRequest(output: string): string | null {
+    const markerMatch = output.match(/HUMAN_APPROVAL_REQUIRED\s*:\s*(.+)/i);
+    if (!markerMatch) {
+      return null;
+    }
+
+    return markerMatch[1].trim() || 'Developer requested a restricted operation.';
   }
 
   private hasCriticalIssues(...results: AgentResult[]): boolean {
@@ -231,7 +388,9 @@ export class Orchestrator {
 
   private belowThreshold(...results: AgentResult[]): boolean {
     return results.some(r =>
-      r.score !== undefined && r.score < this.config.scoreThreshold
+      typeof r.score !== 'number'
+      || !Number.isFinite(r.score)
+      || r.score < this.config.scoreThreshold
     );
   }
 

@@ -1,5 +1,6 @@
 import { Agent } from './agent.js';
 import type { AgentResult, ProjectContext } from '../types.js';
+import { join } from 'node:path';
 
 export class QAEngineer extends Agent {
   constructor(provider: import('../providers/provider.js').Provider) {
@@ -7,9 +8,10 @@ export class QAEngineer extends Agent {
   }
 
   async execute(context: ProjectContext): Promise<AgentResult> {
+    const prdPath = join(context.docsDir, 'PRD.md');
     const prompt = `You are a senior QA Engineer. Test the software in the current workspace directory.
 
-The software should satisfy all requirements in docs/PRD.md.
+The software should satisfy all requirements in ${prdPath}.
 
 Perform the following checks:
 1. **Build/Compile Check** — Can the software be built without errors?
@@ -39,6 +41,10 @@ Respond with a JSON object in a \`\`\`json code block:
       sandbox: 'read-only',
     });
 
-    return this.parseResult(output);
+    return this.parseResult(output, {
+      requireJson: true,
+      requireNumericScore: true,
+      evaluatorName: 'QA Engineer',
+    });
   }
 }

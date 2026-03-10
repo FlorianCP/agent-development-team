@@ -6,7 +6,7 @@ Build an autonomous software development team composed of specialized AI agents 
 
 ## Core Idea
 
-A human provides a goal — anything from a one-line idea to a full product requirements document. The agent team takes it from there: clarifying requirements, designing architecture, writing code, reviewing it, testing it, securing it, and verifying it meets the original requirements. The human stays in control of approvals while the agents handle execution.
+A human provides a goal — anything from a one-line idea to a full product requirements document. The agent team takes it from there: clarifying requirements, designing architecture, writing code, reviewing it, testing it, securing it, verifying it meets the original requirements, and producing concise customer documentation. The human stays in control of approvals while the agents handle execution.
 
 ## Principles
 
@@ -19,7 +19,7 @@ A human provides a goal — anything from a one-line idea to a full product requ
 ## What Success Looks Like
 
 - A human types a requirement and walks away.
-- The agents clarify, design, build, review, test, and secure the software.
+- The agents clarify, design, build, review, test, secure, and document the software.
 - The human comes back to a working product that matches what they asked for.
 - If the human wants the team to be better, they tell the team what to improve and it improves itself.
 

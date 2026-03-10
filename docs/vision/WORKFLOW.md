@@ -64,9 +64,19 @@ If any stage produces critical issues or scores below the threshold, the feedbac
 
 **Output:** Approved product or specific feedback for improvement.
 
-### 6. Delivery
+### 6. Documentation
 
 **Trigger:** PO approves the product.
+
+- The Documentation Writer creates concise customer-facing documentation.
+- The documentation is based on the implemented code and PRD.
+- The output includes quick setup, usage, and key feature guidance.
+
+**Output:** Customer documentation ready to ship with the software.
+
+### 7. Delivery
+
+**Trigger:** Product and documentation are ready.
 
 - The completed software is in the output directory, ready for the human.
 - A summary of what was built, decisions made, and quality scores is provided.
@@ -74,7 +84,7 @@ If any stage produces critical issues or scores below the threshold, the feedbac
 ## Feedback Flow
 
 ```
-Requirements → Architecture → [Human Approval] → Development Loop → PO Review → Done
+Requirements → Architecture → [Human Approval] → Development Loop → PO Review → Documentation → Done
                                       ↑                    ↑              |
                                       |                    |              |
                                       |                    └──────────────┘

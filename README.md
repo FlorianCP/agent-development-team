@@ -19,6 +19,8 @@ Human provides requirement
         ↓
 👔 Product Owner — verifies against requirements
         ↓
+📝 Documentation Writer — creates customer documentation
+        ↓
 ✅ Delivered software
 ```
 
@@ -41,11 +43,15 @@ npm run build
 ### Start a Project
 
 ```bash
-# From a simple requirement
-npx adt start "create a CLI snake game in Python"
+# Local repository usage (recommended while developing this repo)
+npm run start -- start "create a CLI snake game in Python"
+npm run start -- start --prd path/to/requirements.md
 
-# From an existing PRD document
-npx adt start --prd path/to/requirements.md
+# Alternative local invocation after build
+node dist/cli.js --help
+
+# Published/global install usage
+npx adt --help
 ```
 
 The team will:
@@ -54,15 +60,19 @@ The team will:
 3. Ask for your approval before building
 4. Develop, review, test, and secure the code in iterative loops
 5. Have the Product Owner verify against requirements
-6. Deliver the finished software to `./output/`
+6. Generate customer-facing documentation
+7. Deliver the finished software to `./output/`
 
 ### Self-Improvement
 
 ADT can work on its own codebase:
 
 ```bash
-npx adt self-improve "add support for parallel agent execution"
+npm run start -- self-improve "add support for parallel agent execution"
 ```
+
+Use `npm run start -- ...` (or `node dist/cli.js ...`) when running from this repository.
+Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 
 ## Configuration
 
@@ -72,7 +82,9 @@ npx adt self-improve "add support for parallel agent execution"
 | `--model <model>` | (provider default) | Model for the provider |
 | `--max-iterations <n>` | `5` | Max development loop iterations |
 | `--threshold <n>` | `80` | Minimum quality score (0-100) |
+| `--provider-timeout-ms <n>` | `300000` | Timeout per provider call in milliseconds |
 | `--output-dir <dir>` | `./output` | Where to create projects |
+| `--allow-external-prd` | `false` | Allow `--prd` paths outside current workspace |
 
 ## Agent Roles
 
@@ -85,13 +97,14 @@ npx adt self-improve "add support for parallel agent execution"
 | **QA Engineer** | Tests functionality and finds defects |
 | **Security Engineer** | Scans for vulnerabilities (OWASP Top 10) |
 | **Product Owner** | Verifies product meets all requirements |
+| **Documentation Writer** | Creates brief, high-quality customer documentation |
 
 ## Architecture
 
 ```
 src/
   cli.ts              — CLI entry point
-  orchestrator.ts     — Workflow: requirements → architecture → dev loop → PO
+  orchestrator.ts     — Workflow: requirements → architecture → dev loop → PO → docs
   types.ts            — Shared type definitions
   utils.ts            — Helpers (user input, JSON parsing, logging)
   agents/
@@ -103,6 +116,7 @@ src/
     qa.ts
     security.ts
     product-owner.ts
+    documentation-writer.ts
   providers/
     provider.ts       — Provider interface
     codex.ts          — Codex CLI provider
@@ -134,7 +148,7 @@ src/
 npm install          # Install dependencies
 npm run build        # Compile TypeScript
 npm run dev          # Watch mode compilation
-npx adt --help       # Verify CLI works
+npm run start -- --help  # Verify CLI works locally
 ```
 
 ## Vision

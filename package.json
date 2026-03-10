@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js",
     "start": "node dist/cli.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test test/**/*.test.mjs"
   },
   "keywords": ["ai", "agents", "development", "autonomous"],
   "license": "MIT",

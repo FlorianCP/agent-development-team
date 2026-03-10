@@ -24,11 +24,11 @@ Examples of future providers: different AI model APIs, local model servers, spec
 Each agent is a self-contained unit with a role, prompt, and execution logic. New agents can be added to the pipeline, and existing agents can be modified or replaced.
 
 **Possible future agents:**
-- Documentation Writer — generates user-facing documentation
 - Performance Analyst — profiles and optimizes code
 - UX Reviewer — evaluates user interface quality
 - Deployment Engineer — handles CI/CD and infrastructure
 - Test Writer — generates comprehensive test suites
+- Release Manager — prepares release notes and packaging
 
 ### Workflow
 
@@ -54,5 +54,5 @@ To keep the system coherent while extending it:
 
 1. **All agents must communicate through the orchestrator.** No direct agent-to-agent communication.
 2. **All providers must implement the same interface.** Provider-specific features are exposed through configuration, not interface changes.
-3. **The core workflow (requirements → development → review → approval) should remain stable.** Extensions add to it, not replace it.
+3. **The core workflow (requirements → development → review → approval → documentation) should remain stable.** Extensions add to it, not replace it.
 4. **Self-improvement changes go through the same quality loop as any other project.** The system does not modify itself without review.

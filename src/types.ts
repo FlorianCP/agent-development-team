@@ -2,6 +2,8 @@ export interface ProviderOptions {
   workingDir?: string;
   model?: string;
   sandbox?: 'read-only' | 'workspace-write';
+  timeoutMs?: number;
+  trustMode?: 'safe' | 'high';
 }
 
 export interface Provider {
@@ -14,6 +16,7 @@ export interface AgentResult {
   output: string;
   score?: number;
   issues?: Issue[];
+  evaluationValid?: boolean;
 }
 
 export interface Issue {
@@ -27,10 +30,12 @@ export interface ProjectContext {
   requirement: string;
   prd?: string;
   architecture?: string;
+  docsDir: string;
   workspaceDir: string;
   iteration: number;
   maxIterations: number;
   feedback: string[];
+  developerTrustMode?: ProviderOptions['trustMode'];
 }
 
 export interface ADTConfig {
@@ -39,6 +44,7 @@ export interface ADTConfig {
   maxIterations: number;
   scoreThreshold: number;
   outputDir: string;
+  providerTimeoutMs: number;
 }
 
 export const DEFAULT_CONFIG: ADTConfig = {
@@ -46,4 +52,5 @@ export const DEFAULT_CONFIG: ADTConfig = {
   maxIterations: 5,
   scoreThreshold: 80,
   outputDir: './output',
+  providerTimeoutMs: 300000,
 };

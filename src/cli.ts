@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { parseArgs } from 'node:util';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
 import { CodexProvider } from './providers/codex.js';
 import { Orchestrator } from './orchestrator.js';
 import type { ADTConfig } from './types.js';
@@ -21,7 +22,9 @@ Options:
   --model <model>      Model to use with the provider
   --max-iterations <n> Max development iterations (default: 5)
   --threshold <n>      Minimum quality score 0-100 (default: 80)
+  --provider-timeout-ms <n> Timeout per provider call in milliseconds (default: 300000)
   --output-dir <dir>   Output directory (default: ./output)
+  --allow-external-prd Allow --prd files outside the current workspace
   --help, -h           Show this help message
   --version, -v        Show version
 
@@ -41,7 +44,9 @@ async function main(): Promise<void> {
       model: { type: 'string' },
       'max-iterations': { type: 'string', default: '5' },
       threshold: { type: 'string', default: '80' },
+      'provider-timeout-ms': { type: 'string', default: String(DEFAULT_CONFIG.providerTimeoutMs) },
       'output-dir': { type: 'string', default: './output' },
+      'allow-external-prd': { type: 'boolean', default: false },
       prd: { type: 'string' },
     },
   });
@@ -63,13 +68,22 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const maxIterations = parseIntegerOption('max-iterations', values['max-iterations'] ?? '5', 1);
+  const threshold = parseNumberOption('threshold', values.threshold ?? '80', 0, 100);
+  const providerTimeoutMs = parseIntegerOption(
+    'provider-timeout-ms',
+    values['provider-timeout-ms'] ?? String(DEFAULT_CONFIG.providerTimeoutMs),
+    1,
+  );
+
   const config: ADTConfig = {
     ...DEFAULT_CONFIG,
     provider: values.provider ?? DEFAULT_CONFIG.provider,
     model: values.model,
-    maxIterations: parseInt(values['max-iterations'] ?? '5', 10),
-    scoreThreshold: parseInt(values.threshold ?? '80', 10),
+    maxIterations,
+    scoreThreshold: threshold,
     outputDir: values['output-dir'] ?? DEFAULT_CONFIG.outputDir,
+    providerTimeoutMs,
   };
 
   const provider = createProvider(config);
@@ -80,7 +94,7 @@ async function main(): Promise<void> {
       let requirement: string;
 
       if (values.prd) {
-        requirement = await readFile(values.prd, 'utf-8');
+        requirement = await readPrdFile(values.prd, values['allow-external-prd'] ?? false);
       } else {
         requirement = positionals.slice(1).join(' ');
       }
@@ -92,7 +106,8 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
-      await orchestrator.start(requirement);
+      const success = await orchestrator.start(requirement);
+      process.exit(success ? 0 : 1);
       break;
     }
 
@@ -105,7 +120,8 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
-      await orchestrator.selfImprove(requirement);
+      const success = await orchestrator.selfImprove(requirement);
+      process.exit(success ? 0 : 1);
       break;
     }
 
@@ -116,10 +132,62 @@ async function main(): Promise<void> {
   }
 }
 
+class CliInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CliInputError';
+  }
+}
+
+async function readPrdFile(inputPath: string, allowExternalPrd: boolean): Promise<string> {
+  const cwd = await resolveRealpath(process.cwd());
+  const requestedPath = resolve(inputPath);
+  const canonicalPath = await resolveRealpath(requestedPath).catch((error) => {
+    if (isNodeErrno(error, 'ENOENT')) {
+      throw new CliInputError(`Error: PRD file not found: ${requestedPath}`);
+    }
+    if (isNodeErrno(error, 'EACCES') || isNodeErrno(error, 'EPERM')) {
+      throw new CliInputError(`Error: PRD file is not readable: ${requestedPath}`);
+    }
+    throw error;
+  });
+
+  if (!allowExternalPrd && !isWithinDirectory(cwd, canonicalPath)) {
+    throw new CliInputError(
+      `Error: PRD file must be inside the current workspace (${cwd}). Use --allow-external-prd to override.`,
+    );
+  }
+
+  try {
+    return await readFile(canonicalPath, 'utf-8');
+  } catch (error) {
+    if (isNodeErrno(error, 'ENOENT')) {
+      throw new CliInputError(`Error: PRD file not found: ${canonicalPath}`);
+    }
+    if (isNodeErrno(error, 'EACCES') || isNodeErrno(error, 'EPERM')) {
+      throw new CliInputError(`Error: PRD file is not readable: ${canonicalPath}`);
+    }
+    throw error;
+  }
+}
+
+async function resolveRealpath(path: string): Promise<string> {
+  return realpath(path);
+}
+
+function isWithinDirectory(baseDir: string, targetPath: string): boolean {
+  const rel = relative(baseDir, targetPath);
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('../') && rel !== '..');
+}
+
+function isNodeErrno(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === code);
+}
+
 function createProvider(config: ADTConfig) {
   switch (config.provider) {
     case 'codex':
-      return new CodexProvider(config.model);
+      return new CodexProvider(config.model, { defaultTimeoutMs: config.providerTimeoutMs });
     default:
       console.error(`Unknown provider: ${config.provider}`);
       console.error('Available providers: codex');
@@ -127,7 +195,35 @@ function createProvider(config: ADTConfig) {
   }
 }
 
+function parseIntegerOption(name: string, rawValue: string, min: number): number {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < min) {
+    console.error(
+      `Error: Invalid value for --${name}: "${rawValue}". Expected an integer >= ${min}.`,
+    );
+    process.exit(1);
+  }
+
+  return value;
+}
+
+function parseNumberOption(name: string, rawValue: string, min: number, max: number): number {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    console.error(
+      `Error: Invalid value for --${name}: "${rawValue}". Expected a number between ${min} and ${max}.`,
+    );
+    process.exit(1);
+  }
+
+  return value;
+}
+
 main().catch((err) => {
+  if (err instanceof CliInputError) {
+    console.error(err.message);
+    process.exit(1);
+  }
   console.error('\n❌ Fatal error:', err.message);
   process.exit(1);
 });

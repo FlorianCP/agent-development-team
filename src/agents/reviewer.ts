@@ -1,5 +1,6 @@
 import { Agent } from './agent.js';
 import type { AgentResult, ProjectContext } from '../types.js';
+import { join } from 'node:path';
 
 export class Reviewer extends Agent {
   constructor(provider: import('../providers/provider.js').Provider) {
@@ -7,9 +8,11 @@ export class Reviewer extends Agent {
   }
 
   async execute(context: ProjectContext): Promise<AgentResult> {
+    const prdPath = join(context.docsDir, 'PRD.md');
+    const architecturePath = join(context.docsDir, 'ARCHITECTURE.md');
     const prompt = `You are a senior Code Reviewer. Review all code in the current workspace directory.
 
-The code should implement the requirements from docs/PRD.md following the architecture in docs/ARCHITECTURE.md.
+The code should implement the requirements from ${prdPath} following the architecture in ${architecturePath}.
 
 Evaluate:
 1. **Code Quality** — Is the code clean, readable, and well-structured?
@@ -38,6 +41,10 @@ Respond with a JSON object in a \`\`\`json code block:
       sandbox: 'read-only',
     });
 
-    return this.parseResult(output);
+    return this.parseResult(output, {
+      requireJson: true,
+      requireNumericScore: true,
+      evaluatorName: 'Code Reviewer',
+    });
   }
 }
