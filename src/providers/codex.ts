@@ -19,6 +19,7 @@ interface CodexProviderConfig {
   defaultTimeoutMs?: number;
   trustedInstallDirs?: string[];
   reasoningEffort?: 'low' | 'medium' | 'high';
+  allowUntrustedCodexPath?: boolean;
 }
 
 type CodexErrorCode =
@@ -39,6 +40,7 @@ interface CommandTelemetryAudit {
   telemetrySeen: boolean;
   ambiguousCommandEvents: number;
   executedCommands: string[];
+  explicitNoCommandsEventSeen: boolean;
 }
 
 class CodexExecutionError extends Error {
@@ -85,9 +87,17 @@ export class CodexProvider implements Provider {
       .map(dir => resolve(dir));
 
     const explicitPath = config?.codexPath ?? process.env['ADT_CODEX_PATH'];
+    const allowUntrustedCodexPath = config?.allowUntrustedCodexPath
+      || process.env['ADT_ALLOW_UNTRUSTED_CODEX_PATH'] === '1';
+    if (explicitPath && allowUntrustedCodexPath) {
+      console.warn('Warning: allowing codex binary outside trusted install directories due explicit override.');
+    }
     this.codexBinaryPathPromise = explicitPath
-      ? this.validateCodexBinary(explicitPath, false)
+      ? this.validateCodexBinary(explicitPath, !allowUntrustedCodexPath)
       : this.resolveCodexBinaryPath();
+    this.codexBinaryPathPromise.catch(() => {
+      // Validation failure is surfaced on execute(); attaching a handler prevents unhandled rejection noise.
+    });
   }
 
   async execute(prompt: string, options?: ProviderOptions): Promise<string> {
@@ -468,6 +478,16 @@ export class CodexProvider implements Provider {
       );
     }
 
+    if (audit.executedCommands.length === 0) {
+      if (!audit.explicitNoCommandsEventSeen) {
+        throw new CodexExecutionError(
+          'High-trust execution failed: no executable command telemetry was captured.',
+          'COMMAND_POLICY_VIOLATION',
+        );
+      }
+      return;
+    }
+
     for (const command of audit.executedCommands) {
       const normalized = this.normalizeCommand(command);
 
@@ -628,6 +648,7 @@ class CommandTelemetryCollector {
   private buffer = '';
   private telemetrySeen = false;
   private ambiguousCommandEvents = 0;
+  private explicitNoCommandsEventSeen = false;
   private readonly commands = new Set<string>();
 
   ingest(chunk: string): void {
@@ -655,6 +676,7 @@ class CommandTelemetryCollector {
       telemetrySeen: this.telemetrySeen,
       ambiguousCommandEvents: this.ambiguousCommandEvents,
       executedCommands: Array.from(this.commands),
+      explicitNoCommandsEventSeen: this.explicitNoCommandsEventSeen,
     };
   }
 
@@ -679,6 +701,10 @@ class CommandTelemetryCollector {
 
     if (this.looksLikeCommandExecutionEvent(payload) && commands.length === 0) {
       this.ambiguousCommandEvents++;
+    }
+
+    if (this.looksLikeExplicitNoCommandsEvent(payload)) {
+      this.explicitNoCommandsEventSeen = true;
     }
   }
 
@@ -816,5 +842,58 @@ class CommandTelemetryCollector {
     }
 
     return typeof current === 'string' ? current : undefined;
+  }
+
+  private looksLikeExplicitNoCommandsEvent(payload: unknown): boolean {
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+
+    const record = payload as Record<string, unknown>;
+    if (record['no_commands_executed'] === true || record['noCommandsExecuted'] === true) {
+      return true;
+    }
+
+    if (this.looksLikeSummaryEvent(record)) {
+      const count = this.readNestedNumber(record, 'commands_executed')
+        ?? this.readNestedNumber(record, 'executed_command_count')
+        ?? this.readNestedNumber(record, 'command_count')
+        ?? this.readNestedNumber(record, 'commandsExecuted');
+      if (count === 0) {
+        return true;
+      }
+
+      const status = this.readNestedString(record, 'status')
+        ?? this.readNestedString(record, 'summary');
+      if (typeof status === 'string' && /no commands executed/i.test(status)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private looksLikeSummaryEvent(record: Record<string, unknown>): boolean {
+    const hints = [
+      record['type'],
+      record['name'],
+      record['event'],
+      this.readNestedString(record, 'item', 'type'),
+      this.readNestedString(record, 'item', 'name'),
+    ].filter((value): value is string => typeof value === 'string');
+
+    return hints.some(value => /(summary|session|complete|completed|finished|result|final)/i.test(value));
+  }
+
+  private readNestedNumber(record: Record<string, unknown>, ...path: string[]): number | undefined {
+    let current: unknown = record;
+    for (const key of path) {
+      if (!current || typeof current !== 'object') {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[key];
+    }
+
+    return typeof current === 'number' && Number.isFinite(current) ? current : undefined;
   }
 }

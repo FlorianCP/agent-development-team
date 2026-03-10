@@ -7,7 +7,7 @@ import { CodexProvider } from '../dist/providers/codex.js';
 
 function createPolicy() {
   return {
-    allowedCommandPrefixes: ['npm run build', 'node dist/cli.js --help'],
+    allowedCommandPrefixes: ['npm run build', 'npm run test', 'tsc --noemit', 'node dist/cli.js --help'],
     blockedCommandPatterns: ['\\brm\\s+-rf\\b', '\\bcurl\\b'],
   };
 }
@@ -20,7 +20,7 @@ async function createFakeCodexBinary(tempDir, scriptBody) {
   return scriptPath;
 }
 
-test('high-trust mode enforces command policy on executed command telemetry', async () => {
+test('high-trust mode enforces command policy on direct executed commands', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
 
   try {
@@ -30,11 +30,15 @@ const outputIndex = args.indexOf('-o');
 if (outputIndex >= 0 && args[outputIndex + 1]) {
   writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
 }
-console.log(JSON.stringify({ type: 'command_execution', command: 'npm run build' }));
+console.log(JSON.stringify({ type: 'command_execution', command: 'tsc --noEmit' }));
 process.exit(0);
 `);
 
-    const provider = new CodexProvider(undefined, { codexPath, defaultTimeoutMs: 5000 });
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
     const output = await provider.execute('test', {
       trustMode: 'high',
       sandbox: 'workspace-write',
@@ -61,7 +65,44 @@ console.log(JSON.stringify({ type: 'command_execution', command: 'rm -rf /tmp/da
 process.exit(0);
 `);
 
-    const provider = new CodexProvider(undefined, { codexPath, defaultTimeoutMs: 5000 });
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
+
+    await assert.rejects(
+      () => provider.execute('test', {
+        trustMode: 'high',
+        sandbox: 'workspace-write',
+        commandPolicy: createPolicy(),
+      }),
+      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('high-trust mode rejects commands not in allowed prefixes', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
+
+  try {
+    const codexPath = await createFakeCodexBinary(tempDir, `
+const args = process.argv.slice(2);
+const outputIndex = args.indexOf('-o');
+if (outputIndex >= 0 && args[outputIndex + 1]) {
+  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
+}
+console.log(JSON.stringify({ type: 'command_execution', command: 'python setup.py install' }));
+process.exit(0);
+`);
+
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
 
     await assert.rejects(
       () => provider.execute('test', {
@@ -90,7 +131,11 @@ console.log('non-json telemetry line');
 process.exit(0);
 `);
 
-    const provider = new CodexProvider(undefined, { codexPath, defaultTimeoutMs: 5000 });
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
 
     await assert.rejects(
       () => provider.execute('test', {
@@ -100,6 +145,70 @@ process.exit(0);
       }),
       (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
     );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('high-trust mode fails closed when telemetry has no commands and no explicit no-command event', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
+
+  try {
+    const codexPath = await createFakeCodexBinary(tempDir, `
+const args = process.argv.slice(2);
+const outputIndex = args.indexOf('-o');
+if (outputIndex >= 0 && args[outputIndex + 1]) {
+  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
+}
+console.log(JSON.stringify({ type: 'session_summary', status: 'completed' }));
+process.exit(0);
+`);
+
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
+
+    await assert.rejects(
+      () => provider.execute('test', {
+        trustMode: 'high',
+        sandbox: 'workspace-write',
+        commandPolicy: createPolicy(),
+      }),
+      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('high-trust mode accepts explicit no-command execution telemetry', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
+
+  try {
+    const codexPath = await createFakeCodexBinary(tempDir, `
+const args = process.argv.slice(2);
+const outputIndex = args.indexOf('-o');
+if (outputIndex >= 0 && args[outputIndex + 1]) {
+  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
+}
+console.log(JSON.stringify({ type: 'session_summary', no_commands_executed: true }));
+process.exit(0);
+`);
+
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
+    const output = await provider.execute('test', {
+      trustMode: 'high',
+      sandbox: 'workspace-write',
+      commandPolicy: createPolicy(),
+    });
+
+    assert.equal(output, 'ok');
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -118,7 +227,11 @@ if (outputIndex >= 0 && args[outputIndex + 1]) {
 process.exit(0);
 `);
 
-    const provider = new CodexProvider(undefined, { codexPath, defaultTimeoutMs: 5000 });
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
     const output = await provider.execute('test', { sandbox: 'read-only' });
 
     assert.match(output, /\[REDACTED_TOKEN\]/);
@@ -144,7 +257,11 @@ if (outputIndex >= 0 && args[outputIndex + 1]) {
 process.exit(0);
 `);
 
-    const provider = new CodexProvider(undefined, { codexPath, defaultTimeoutMs: 5000 });
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
 
     await assert.rejects(
       () => provider.execute('test', { sandbox: 'read-only' }),
@@ -175,7 +292,11 @@ if (outputIndex >= 0 && args[outputIndex + 1]) {
 process.exit(0);
 `);
 
-    const provider = new CodexProvider(undefined, { codexPath, defaultTimeoutMs: 5000 });
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
     const missingByDefault = await provider.execute('test', { sandbox: 'read-only' });
     const presentWhenAllowed = await provider.execute('test', {
       sandbox: 'read-only',
@@ -190,6 +311,20 @@ process.exit(0);
     } else {
       process.env.OPENAI_API_KEY = originalKey;
     }
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('explicit codexPath requires trusted install dir unless insecure override is enabled', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
+
+  try {
+    const codexPath = await createFakeCodexBinary(tempDir, 'process.exit(0);');
+    await assert.rejects(
+      () => new CodexProvider(undefined, { codexPath }).execute('test', { sandbox: 'read-only' }),
+      (error) => error && error.code === 'BINARY_VALIDATION_FAILED',
+    );
+  } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
 });

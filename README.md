@@ -2,6 +2,8 @@
 
 An autonomous software development team powered by AI agents. Give it a requirement, and the team will clarify, design, build, review, test, secure, and deliver working software.
 
+> **⚠️ Use at your own risk.** ADT operates autonomously — agents make tool calls, execute shell commands, read and write files, and run build/test scripts **without human approval**. Review the generated code before deploying it. Do not run ADT on systems containing sensitive data or in production environments without appropriate sandboxing.
+
 ## How It Works
 
 ```

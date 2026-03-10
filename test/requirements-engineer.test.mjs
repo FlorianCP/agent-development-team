@@ -37,7 +37,7 @@ test('generateQuestions returns parsed string array when JSON schema is valid', 
   assert.deepEqual(questions, ['What platform?', 'Any auth requirements?']);
 });
 
-test('generateQuestions ignores malformed questions arrays and falls back safely', async () => {
+test('generateQuestions retries once when JSON schema is invalid before falling back', async () => {
   const provider = new FakeProvider(
     '```json\n{"questions":["Valid question", 42, {"oops":true}]}\n```',
   );
@@ -49,6 +49,19 @@ test('generateQuestions ignores malformed questions arrays and falls back safely
     'Are there any specific technology preferences or constraints?',
     'What is the target platform (web, desktop, mobile, CLI)?',
   ]);
+  assert.equal(provider.calls, 2);
+});
+
+test('generateQuestions recovers when schema-invalid response is followed by valid JSON', async () => {
+  const provider = new FakeProvider([
+    '```json\n{"questions":["Valid question", 42]}\n```',
+    '```json\n{"questions":["What data retention policy is required?"]}\n```',
+  ]);
+  const agent = new RequirementsEngineer(provider);
+
+  const questions = await agent.generateQuestions(createContext());
+  assert.deepEqual(questions, ['What data retention policy is required?']);
+  assert.equal(provider.calls, 2);
 });
 
 test('generateQuestions retries once when first response is malformed JSON', async () => {

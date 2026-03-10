@@ -65,6 +65,9 @@ Respond with a JSON object in a \`\`\`json code block:
       requireNumericScore: true,
       evaluatorName: 'Product Owner',
     });
+    if (result.evaluationValid === false) {
+      return result;
+    }
 
     const parsed = parseAgentJson(output);
     if (!parsed || typeof parsed['approved'] !== 'boolean') {

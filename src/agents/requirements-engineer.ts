@@ -1,5 +1,6 @@
 import { Agent } from './agent.js';
 import type { AgentResult, ProjectContext } from '../types.js';
+import { parseAgentJson } from '../utils.js';
 
 export class RequirementsEngineer extends Agent {
   constructor(provider: import('../providers/provider.js').Provider) {
@@ -33,13 +34,26 @@ Respond with a JSON object in a \`\`\`json code block:
 Generate between 3 and 8 focused questions. Do not ask questions that are already clearly answered in the requirement.`;
 
     const { output, parsed } = await this.callProviderForJson(prompt, { sandbox: 'read-only' });
-    const questions = parsed?.['questions'];
-    if (Array.isArray(questions) && questions.every(q => typeof q === 'string')) {
-      return questions;
+    let fallbackSource = output;
+    const parsedQuestions = this.parseQuestions(parsed);
+    if (parsedQuestions) {
+      return parsedQuestions;
+    }
+
+    if (parsed) {
+      const retryPrompt = `${prompt}
+
+IMPORTANT: Your previous response used an invalid \`questions\` schema. Respond with a JSON object in a \`\`\`json code block where "questions" is an array of strings.`;
+      const retryOutput = await this.callProvider(retryPrompt, { sandbox: 'read-only' });
+      fallbackSource = retryOutput;
+      const retryParsedQuestions = this.parseQuestions(parseAgentJson(retryOutput));
+      if (retryParsedQuestions) {
+        return retryParsedQuestions;
+      }
     }
 
     // Fallback: extract questions from text
-    const lines = output.split('\n').filter(l => l.match(/^\s*\d+[\.\)]/));
+    const lines = fallbackSource.split('\n').filter(l => l.match(/^\s*\d+[\.\)]/));
     return lines.length > 0 ? lines.map(l => l.replace(/^\s*\d+[\.\)]\s*/, '')) : [
       'What is the primary use case for this software?',
       'Are there any specific technology preferences or constraints?',
@@ -89,5 +103,14 @@ Output ONLY the PRD document in Markdown. Do not wrap it in a code block.`;
       success: true,
       output: context.prd ?? 'No PRD generated',
     };
+  }
+
+  private parseQuestions(parsed: Record<string, unknown> | null): string[] | null {
+    const questions = parsed?.['questions'];
+    if (Array.isArray(questions) && questions.every(q => typeof q === 'string')) {
+      return questions as string[];
+    }
+
+    return null;
   }
 }

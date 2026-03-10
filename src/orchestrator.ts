@@ -2,8 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { access, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
 import type {
@@ -584,23 +584,33 @@ export class Orchestrator {
     parsedPackage: Record<string, unknown>,
     workspaceDir: string,
   ): Promise<string | null> {
+    const workspaceRealPath = await this.resolveRealPathSafe(workspaceDir);
     const bin = parsedPackage['bin'];
     if (typeof bin === 'string') {
-      return join(workspaceDir, bin);
+      return this.resolveWorkspaceCommandPath(workspaceDir, workspaceRealPath, bin);
     }
 
     if (bin && typeof bin === 'object') {
       const entries = Object.values(bin as Record<string, unknown>);
       for (const entry of entries) {
         if (typeof entry === 'string') {
-          return join(workspaceDir, entry);
+          const resolvedBin = await this.resolveWorkspaceCommandPath(
+            workspaceDir,
+            workspaceRealPath,
+            entry,
+          );
+          if (resolvedBin) {
+            return resolvedBin;
+          }
         }
       }
     }
 
-    const fallback = join(workspaceDir, 'dist', 'cli.js');
-    const exists = await this.pathExists(fallback);
-    return exists ? fallback : null;
+    return this.resolveWorkspaceCommandPath(
+      workspaceDir,
+      workspaceRealPath,
+      join('dist', 'cli.js'),
+    );
   }
 
   private async pathExists(path: string): Promise<boolean> {
@@ -987,6 +997,8 @@ export class Orchestrator {
         'npm run typecheck',
         'npx adt --help',
         'node dist/cli.js --help',
+        'node --test',
+        'tsc --noemit',
         'tsc',
       ],
       blockedCommandPatterns: [
@@ -1160,5 +1172,52 @@ export class Orchestrator {
       .split(/\s+/)
       .slice(0, 4)
       .join('-') || 'project';
+  }
+
+  private async resolveWorkspaceCommandPath(
+    workspaceDir: string,
+    workspaceRealPath: string,
+    candidatePath: string,
+  ): Promise<string | null> {
+    const normalized = candidatePath.trim();
+    if (normalized.length === 0 || normalized.includes('\0') || isAbsolute(normalized)) {
+      return null;
+    }
+
+    const resolvedPath = resolve(workspaceDir, normalized);
+    const relativeToWorkspace = relative(workspaceDir, resolvedPath);
+    if (relativeToWorkspace === '..' || relativeToWorkspace.startsWith(`..${sep}`)) {
+      return null;
+    }
+
+    if (!(await this.pathExists(resolvedPath))) {
+      return null;
+    }
+
+    let canonicalPath: string;
+    try {
+      canonicalPath = await realpath(resolvedPath);
+    } catch {
+      return null;
+    }
+
+    if (!this.isPathInside(workspaceRealPath, canonicalPath)) {
+      return null;
+    }
+
+    return canonicalPath;
+  }
+
+  private async resolveRealPathSafe(path: string): Promise<string> {
+    try {
+      return await realpath(path);
+    } catch {
+      return resolve(path);
+    }
+  }
+
+  private isPathInside(baseDir: string, targetPath: string): boolean {
+    const rel = relative(baseDir, targetPath);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`));
   }
 }
