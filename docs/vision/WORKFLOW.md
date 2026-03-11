@@ -44,12 +44,15 @@ This is an iterative loop that continues until quality thresholds are met or the
 Each iteration:
 
 1. **Develop** — The Developer writes or modifies code based on the PRD, architecture, and any feedback from previous iterations.
-2. **Review** — The Reviewer examines code quality, patterns, and adherence to best practices.
-3. **Score** — The code is scored against each requirement in the PRD.
-4. **QA** — The QA agent tests the software from a user perspective and checks for defects.
-5. **Security** — The Security agent scans for vulnerabilities and security issues.
+2. **Evaluate (in parallel)** — The Reviewer, QA Engineer, and Security Engineer run concurrently:
+   - **Reviewer** examines code quality, patterns, and adherence to best practices.
+   - **QA Engineer** tests the software from a user perspective and checks for defects.
+   - **Security Engineer** scans for vulnerabilities and security issues.
+3. **Report** — Structured Markdown reports are saved for each agent after completion.
 
-If any stage produces critical issues or scores below the threshold, the feedback is aggregated and the loop repeats from the Development step.
+The parallel evaluation gate reduces wall-clock time to the duration of the slowest evaluator rather than the sum of all three.
+
+If any evaluator produces critical issues or scores below the threshold, the feedback is aggregated and the loop repeats from the Development step.
 
 **Output:** Code that passes all quality gates.
 

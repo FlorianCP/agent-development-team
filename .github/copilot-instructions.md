@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is the Agent Development Team (ADT) — an autonomous software development system where multiple specialized AI agents collaborate to build software. The system orchestrates agents through a pipeline: requirements → architecture → development → review → QA → security → product owner approval.
+This is the Agent Development Team (ADT) — an autonomous software development system where multiple specialized AI agents collaborate to build software. The system orchestrates agents through a pipeline: requirements → architecture → development → review + QA + security (in parallel) → product owner approval.
 
 ## Codebase Structure
 

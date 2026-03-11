@@ -44,6 +44,7 @@ Provider settings (model, reasoning effort) are configured in `.adt.config.json`
 - The codex provider uses `codex exec` for non-interactive agent execution
 - Each agent constructs a prompt from its template + context and sends it through the provider
 - The development loop iterates until quality thresholds are met or max iterations reached
+- Evaluators (Reviewer, QA, Security) run in parallel within each iteration
 - In self-improve mode, git checkpoints are created before each iteration (disable with `--no-git-checkpoints`)
 
 ## Important Patterns

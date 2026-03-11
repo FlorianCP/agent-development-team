@@ -16,7 +16,7 @@ Human provides requirement
 📄 Human approves PRD + Architecture
         ↓
 🔄 Development Loop:
-   👨‍💻 Developer → 🔍 Reviewer → 🧪 QA → 🔒 Security
+   👨‍💻 Developer → 🔍 Reviewer + 🧪 QA + 🔒 Security (in parallel)
    (loops until quality thresholds are met)
         ↓
 👔 Product Owner — verifies against requirements
@@ -165,6 +165,7 @@ During each run, ADT logs:
 - Per-agent execution time (`Developer completed in ...`)
 - Iteration progress (`Development Iteration 2/5`)
 - Score trends across iterations (`Review: 60→75→88`)
+- Parallel evaluator wall-clock time
 - End-of-run summary (`Iterations: ...`, `Total time: ...`)
 
 Example console output:
@@ -172,13 +173,28 @@ Example console output:
 ```text
 🔄 Development Iteration 3/5
    Developer completed in 8.2s.
+   Started: Code Reviewer
+   Started: QA Engineer
+   Started: Security Engineer
    Code Reviewer completed in 2.3s.
    QA Engineer completed in 1.9s.
-   Security Engineer completed in 2.1s.
+   Security Engineer completed in 2.5s.
+   Parallel evaluator wall-clock time: 2.5s.
    Score trends -> Review: 60→75→88 | QA: 70→82→90 | Security: 64→78→86
 📊 Iterations: 3
 ⏱️ Total time: 1m 12.4s
 ```
+
+## Review Reports
+
+After each development loop iteration, structured Markdown reports are saved for the Developer, Code Reviewer, QA Engineer, and Security Engineer.
+
+- **Normal runs:** Reports are saved to `docs/reviews/` inside the project workspace.
+- **Self-improvement runs:** Reports are saved inside the `.adt-self-improve/<run-id>/docs/reviews/` directory.
+
+File naming: `iteration-N-developer.md`, `iteration-N-reviewer.md`, `iteration-N-qa.md`, `iteration-N-security.md`.
+
+Each report contains the agent name, iteration number, score, a summary, and issues grouped by severity (critical, major, minor, info). Reports accumulate across iterations, providing a full audit trail of the development process.
 
 ### Adding a Provider
 
