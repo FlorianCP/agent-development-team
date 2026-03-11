@@ -10,6 +10,7 @@ import type {
   ADTConfig,
   AgentResult,
   CommandPolicy,
+  Issue,
   IterationTiming,
   ProjectContext,
   RunMetrics,
@@ -29,6 +30,17 @@ interface VerificationCheck {
   label: string;
   command: string;
   args: string[];
+}
+
+type ReviewReportAgentKey = 'developer' | 'reviewer' | 'qa' | 'security';
+
+interface ReviewReportEntry {
+  agentName: string;
+  agentKey: ReviewReportAgentKey;
+  iteration: number;
+  score: string;
+  summary: string;
+  issues?: Issue[];
 }
 
 export class Orchestrator {
@@ -235,6 +247,10 @@ export class Orchestrator {
       // Develop
       log('👨‍💻', 'Developing...');
       const devResult = await this.runTimedAgent('Developer', () => devAgent.execute(context));
+      await this.writeReviewReport(
+        context,
+        this.createDeveloperReviewReport(context, devResult),
+      );
       log('✅', 'Code written.');
 
       const approvalReason = this.extractHumanApprovalRequest(devResult.output);
@@ -283,7 +299,10 @@ export class Orchestrator {
       ).then((result) => {
         this.logEvaluatorCompletion('Code Reviewer', result);
         this.recordScore(scoreHistory.review, result.score);
-        return result;
+        return this.writeReviewReport(
+          context,
+          this.createEvaluatorReviewReport(context, 'Code Reviewer', 'reviewer', result),
+        ).then(() => result);
       });
       const qaTask = this.runEvaluatorSafely(
         'QA Engineer',
@@ -297,7 +316,10 @@ export class Orchestrator {
       ).then((result) => {
         this.logEvaluatorCompletion('QA Engineer', result);
         this.recordScore(scoreHistory.qa, result.score);
-        return result;
+        return this.writeReviewReport(
+          context,
+          this.createEvaluatorReviewReport(context, 'QA Engineer', 'qa', result),
+        ).then(() => result);
       });
       const securityTask = this.runEvaluatorSafely(
         'Security Engineer',
@@ -311,7 +333,10 @@ export class Orchestrator {
       ).then((result) => {
         this.logEvaluatorCompletion('Security Engineer', result);
         this.recordScore(scoreHistory.security, result.score);
-        return result;
+        return this.writeReviewReport(
+          context,
+          this.createEvaluatorReviewReport(context, 'Security Engineer', 'security', result),
+        ).then(() => result);
       });
       const [review, qa, security] = await Promise.all([reviewTask, qaTask, securityTask]);
       logDetail(
@@ -851,6 +876,93 @@ export class Orchestrator {
     return sections.join('\n\n');
   }
 
+  private createDeveloperReviewReport(
+    context: ProjectContext,
+    result: AgentResult,
+  ): ReviewReportEntry {
+    return {
+      agentName: 'Developer',
+      agentKey: 'developer',
+      iteration: context.iteration,
+      score: this.extractDeveloperConfidenceScore(result.output) ?? 'N/A',
+      summary: this.excerptReportText(result.output),
+    };
+  }
+
+  private createEvaluatorReviewReport(
+    context: ProjectContext,
+    agentName: string,
+    agentKey: Exclude<ReviewReportAgentKey, 'developer'>,
+    result: AgentResult,
+  ): ReviewReportEntry {
+    return {
+      agentName,
+      agentKey,
+      iteration: context.iteration,
+      score: this.formatOptionalScore(result.score),
+      summary: this.excerptReportText(result.output),
+      issues: result.issues ?? [],
+    };
+  }
+
+  private async writeReviewReport(
+    context: ProjectContext,
+    entry: ReviewReportEntry,
+  ): Promise<void> {
+    const reviewsDir = join(context.workspaceDir, 'docs', 'reviews');
+    const reportPath = join(reviewsDir, `iteration-${entry.iteration}-${entry.agentKey}.md`);
+    const content = this.renderReviewReport(entry);
+
+    await mkdir(reviewsDir, { recursive: true });
+    await writeFile(reportPath, content, 'utf-8');
+    logDetail(`Review report written: ${reportPath}`);
+  }
+
+  private renderReviewReport(entry: ReviewReportEntry): string {
+    return [
+      `# ${entry.agentName} Report`,
+      '',
+      `- Agent: ${entry.agentName}`,
+      `- Iteration: ${entry.iteration}`,
+      `- Score: ${entry.score}`,
+      '',
+      '## Summary',
+      entry.summary,
+      '',
+      '## Issues By Severity',
+      this.renderReportIssueGroups(entry.issues ?? []),
+    ].join('\n');
+  }
+
+  private renderReportIssueGroups(issues: Issue[]): string {
+    const grouped = this.groupIssuesBySeverity(
+      [{ name: 'Report', result: { success: true, output: '', issues } }],
+      false,
+    );
+
+    return [
+      '### Critical',
+      ...this.renderReportIssueList(grouped.critical),
+      '',
+      '### Major',
+      ...this.renderReportIssueList(grouped.major),
+      '',
+      '### Minor',
+      ...this.renderReportIssueList(grouped.minor),
+      '',
+      '### Info',
+      ...this.renderReportIssueList(grouped.info),
+    ].join('\n');
+  }
+
+  private renderReportIssueList(items: string[]): string[] {
+    if (items.length === 0) {
+      return ['- None'];
+    }
+
+    return items.map(item => `- ${item}`);
+  }
+
   private async publishIterationReport(
     context: ProjectContext,
     scoreHistory: ScoreHistory,
@@ -925,6 +1037,7 @@ export class Orchestrator {
 
   private groupIssuesBySeverity(
     evaluations: Array<{ name: string; result: AgentResult }>,
+    includeAgentPrefix = true,
   ): Record<'critical' | 'major' | 'minor' | 'info', string[]> {
     const grouped: Record<'critical' | 'major' | 'minor' | 'info', string[]> = {
       critical: [],
@@ -937,7 +1050,8 @@ export class Orchestrator {
       for (const issue of result.issues ?? []) {
         const location = issue.file ? ` (${issue.file})` : '';
         const suggestion = issue.suggestion ? ` -> ${issue.suggestion}` : '';
-        grouped[issue.severity].push(`[${name}] ${issue.description}${location}${suggestion}`);
+        const prefix = includeAgentPrefix ? `[${name}] ` : '';
+        grouped[issue.severity].push(`${prefix}${issue.description}${location}${suggestion}`);
       }
     }
 
@@ -1164,6 +1278,43 @@ export class Orchestrator {
 
     const rounded = score.toFixed(1);
     return rounded.endsWith('.0') ? rounded.slice(0, -2) : rounded;
+  }
+
+  private formatOptionalScore(score: number | undefined): string {
+    if (typeof score !== 'number' || !Number.isFinite(score)) {
+      return 'N/A';
+    }
+
+    return this.formatScore(score);
+  }
+
+  private extractDeveloperConfidenceScore(output: string): string | null {
+    const match = output.match(/Confidence:\s*(100|[1-9]?\d)(?:\b|\/100)/i);
+    if (!match) {
+      return null;
+    }
+
+    return match[1];
+  }
+
+  private excerptReportText(content: string): string {
+    const normalized = content.replace(/\r\n/g, '\n').trim();
+    if (normalized.length === 0) {
+      return 'No summary provided.';
+    }
+
+    const lines = normalized
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .slice(0, 6);
+    const excerpt = lines.join(' ');
+
+    if (excerpt.length <= 500) {
+      return excerpt;
+    }
+
+    return `${excerpt.slice(0, 497)}...`;
   }
 
   private logRunSummary(context: ProjectContext, runStartedAtMs: number): void {

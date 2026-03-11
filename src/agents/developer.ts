@@ -64,6 +64,8 @@ Requirements:
 - Make sure the code compiles/runs without errors
 - Include basic tests if the architecture calls for them
 
+Before finishing, include a short implementation summary in your response. If you can estimate confidence, add a line formatted exactly as "Confidence: <0-100>".
+
 Implement the complete solution. Create all necessary files.`;
 
     const output = await this.callProvider(prompt, {
