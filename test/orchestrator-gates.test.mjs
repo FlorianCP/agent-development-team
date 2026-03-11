@@ -177,6 +177,51 @@ test('fails quality gate when evaluator output is malformed JSON', async () => {
   }
 });
 
+test('captures evaluator failures without cancelling parallel evaluator peers', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
+  let qaCalled = false;
+  let securityCalled = false;
+  let poCalled = false;
+
+  try {
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) return 'Implemented changes.';
+      if (prompt.includes('senior Code Reviewer')) {
+        throw new Error('Reviewer crashed.');
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        qaCalled = true;
+        return jsonBlock({ score: 95, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        securityCalled = true;
+        return jsonBlock({ score: 95, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        poCalled = true;
+        return jsonBlock({ score: 95, approved: true, summary: 'PO approved.', issues: [] });
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+
+    assert.equal(success, false);
+    assert.equal(qaCalled, true);
+    assert.equal(securityCalled, true);
+    assert.equal(poCalled, false);
+    const reportPath = join(outputDir, '.test-docs', 'ITERATION_REPORT.md');
+    const report = await readFile(reportPath, 'utf-8');
+    assert.match(report, /Code Reviewer: 0\/100/);
+    assert.match(report, /QA Engineer: 95\/100/);
+    assert.match(report, /Security Engineer: 95\/100/);
+    assert.match(report, /\[Code Reviewer\] Code Reviewer failed unexpectedly during evaluation\./);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test('fails quality gate when evaluator score is out of range across retries', async () => {
   const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
   let reviewerCalls = 0;

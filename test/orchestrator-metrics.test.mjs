@@ -103,6 +103,10 @@ test('logs score trends, agent timings, and total runtime summary', async () => 
     assert.match(output, /Code Reviewer completed in /);
     assert.match(output, /QA Engineer completed in /);
     assert.match(output, /Security Engineer completed in /);
+    assert.match(output, /Started: Code Reviewer/);
+    assert.match(output, /Started: QA Engineer/);
+    assert.match(output, /Started: Security Engineer/);
+    assert.match(output, /Parallel evaluator wall-clock time: /);
     assert.match(output, /Product Owner completed in /);
     assert.match(output, /Documentation Writer completed in /);
     assert.match(output, /Iteration 1 completed in .* \(retry\)\./);

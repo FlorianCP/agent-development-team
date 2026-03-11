@@ -266,40 +266,52 @@ export class Orchestrator {
       }
 
       // Review
-      log('🔍', 'Reviewing code...');
-      const review = await this.runTimedAgent(
-        'Code Reviewer',
-        () => this.runEvaluatorWithRetry(
+      log('🔍', 'Starting parallel evaluation gates...');
+      logDetail('Started: Code Reviewer');
+      logDetail('Started: QA Engineer');
+      logDetail('Started: Security Engineer');
+      const evaluatorPhaseStartedAtMs = Date.now();
+      const [review, qa, security] = await Promise.all([
+        this.runEvaluatorSafely(
           'Code Reviewer',
-          () => reviewAgent.execute(context),
+          () => this.runTimedAgent(
+            'Code Reviewer',
+            () => this.runEvaluatorWithRetry(
+              'Code Reviewer',
+              () => reviewAgent.execute(context),
+            ),
+          ),
         ),
+        this.runEvaluatorSafely(
+          'QA Engineer',
+          () => this.runTimedAgent(
+            'QA Engineer',
+            () => this.runEvaluatorWithRetry(
+              'QA Engineer',
+              () => qaAgent.execute(context),
+            ),
+          ),
+        ),
+        this.runEvaluatorSafely(
+          'Security Engineer',
+          () => this.runTimedAgent(
+            'Security Engineer',
+            () => this.runEvaluatorWithRetry(
+              'Security Engineer',
+              () => securityAgent.execute(context),
+            ),
+          ),
+        ),
+      ]);
+      logDetail(
+        `Parallel evaluator wall-clock time: ${this.formatDuration(Date.now() - evaluatorPhaseStartedAtMs)}.`,
       );
       logDetail(`Review score: ${review.score ?? 'N/A'}/100`);
       this.recordScore(scoreHistory.review, review.score);
       this.logIssueCount(review);
-
-      // QA
-      log('🧪', 'Running QA checks...');
-      const qa = await this.runTimedAgent(
-        'QA Engineer',
-        () => this.runEvaluatorWithRetry(
-          'QA Engineer',
-          () => qaAgent.execute(context),
-        ),
-      );
       logDetail(`QA score: ${qa.score ?? 'N/A'}/100`);
       this.recordScore(scoreHistory.qa, qa.score);
       this.logIssueCount(qa);
-
-      // Security
-      log('🔒', 'Security scanning...');
-      const security = await this.runTimedAgent(
-        'Security Engineer',
-        () => this.runEvaluatorWithRetry(
-          'Security Engineer',
-          () => securityAgent.execute(context),
-        ),
-      );
       logDetail(`Security score: ${security.score ?? 'N/A'}/100`);
       this.recordScore(scoreHistory.security, security.score);
       this.logIssueCount(security);
@@ -693,6 +705,17 @@ export class Orchestrator {
     return this.normalizedInvalidEvaluationResult(evaluatorName, lastResult);
   }
 
+  private async runEvaluatorSafely(
+    evaluatorName: string,
+    evaluate: () => Promise<AgentResult>,
+  ): Promise<AgentResult> {
+    try {
+      return await evaluate();
+    } catch (error) {
+      return this.normalizedFailedEvaluatorResult(evaluatorName, error);
+    }
+  }
+
   private isValidEvaluationResult(result: AgentResult): boolean {
     if (result.evaluationValid === false) {
       return false;
@@ -759,6 +782,33 @@ export class Orchestrator {
           severity: 'critical',
           description: `${evaluatorName} produced invalid evaluation data after retries.`,
           suggestion: 'Return strict JSON with score in range 0-100 and required fields.',
+        },
+      ],
+    };
+  }
+
+  private normalizedFailedEvaluatorResult(
+    evaluatorName: string,
+    error: unknown,
+  ): AgentResult {
+    const message = error instanceof Error ? error.message : String(error);
+
+    log(
+      '⚠️',
+      `${evaluatorName} failed unexpectedly. Capturing failure as critical feedback.`,
+    );
+    logDetail(`${evaluatorName} error: ${message}`);
+
+    return {
+      success: false,
+      score: 0,
+      output: `${evaluatorName} failed unexpectedly: ${message}`,
+      evaluationValid: false,
+      issues: [
+        {
+          severity: 'critical',
+          description: `${evaluatorName} failed unexpectedly during evaluation.`,
+          suggestion: 'Fix evaluator runtime failure and re-run the quality gates.',
         },
       ],
     };
