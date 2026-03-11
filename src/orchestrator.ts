@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
@@ -166,7 +166,6 @@ export class Orchestrator {
       return await this.runApprovedWorkflow(context, rl, 'Self-Improvement', runStartedAtMs);
     } finally {
       rl.close();
-      await rm(runtimeDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 
@@ -909,7 +908,7 @@ export class Orchestrator {
     context: ProjectContext,
     entry: ReviewReportEntry,
   ): Promise<void> {
-    const reviewsDir = join(context.workspaceDir, 'docs', 'reviews');
+    const reviewsDir = join(context.docsDir, 'reviews');
     const reportPath = join(reviewsDir, `iteration-${entry.iteration}-${entry.agentKey}.md`);
     const content = this.renderReviewReport(entry);
 

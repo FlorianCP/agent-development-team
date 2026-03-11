@@ -90,10 +90,11 @@ test('writes developer and evaluator review reports to workspace docs/reviews', 
 
     assert.equal(success, true);
 
-    const developerReport = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-1-developer.md'), 'utf-8');
-    const reviewerReport = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-1-reviewer.md'), 'utf-8');
-    const qaReport = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-1-qa.md'), 'utf-8');
-    const securityReport = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-1-security.md'), 'utf-8');
+    const reviewsDir = join(outputDir, '.test-docs', 'reviews');
+    const developerReport = await readFile(join(reviewsDir, 'iteration-1-developer.md'), 'utf-8');
+    const reviewerReport = await readFile(join(reviewsDir, 'iteration-1-reviewer.md'), 'utf-8');
+    const qaReport = await readFile(join(reviewsDir, 'iteration-1-qa.md'), 'utf-8');
+    const securityReport = await readFile(join(reviewsDir, 'iteration-1-security.md'), 'utf-8');
 
     assert.match(developerReport, /# Developer Report/);
     assert.match(developerReport, /- Iteration: 1/);
@@ -157,10 +158,11 @@ test('accumulates iteration review reports across retries', async () => {
 
     assert.equal(success, true);
 
-    const iterationOneReviewer = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-1-reviewer.md'), 'utf-8');
-    const iterationTwoReviewer = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-2-reviewer.md'), 'utf-8');
-    const iterationOneDeveloper = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-1-developer.md'), 'utf-8');
-    const iterationTwoDeveloper = await readFile(join(outputDir, 'docs', 'reviews', 'iteration-2-developer.md'), 'utf-8');
+    const reviewsDir = join(outputDir, '.test-docs', 'reviews');
+    const iterationOneReviewer = await readFile(join(reviewsDir, 'iteration-1-reviewer.md'), 'utf-8');
+    const iterationTwoReviewer = await readFile(join(reviewsDir, 'iteration-2-reviewer.md'), 'utf-8');
+    const iterationOneDeveloper = await readFile(join(reviewsDir, 'iteration-1-developer.md'), 'utf-8');
+    const iterationTwoDeveloper = await readFile(join(reviewsDir, 'iteration-2-developer.md'), 'utf-8');
 
     assert.match(iterationOneReviewer, /- Iteration: 1/);
     assert.match(iterationOneReviewer, /- Score: 70/);
