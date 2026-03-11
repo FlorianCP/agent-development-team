@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -95,6 +95,39 @@ if (outputIndex >= 0 && args[outputIndex + 1]) {
   writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
 }
 console.log(JSON.stringify({ type: 'command_execution', command: 'python setup.py install' }));
+process.exit(0);
+`);
+
+    const provider = new CodexProvider(undefined, {
+      codexPath,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
+
+    await assert.rejects(
+      () => provider.execute('test', {
+        trustMode: 'high',
+        sandbox: 'workspace-write',
+        commandPolicy: createPolicy(),
+      }),
+      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('high-trust mode rejects command chaining metacharacters', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
+
+  try {
+    const codexPath = await createFakeCodexBinary(tempDir, `
+const args = process.argv.slice(2);
+const outputIndex = args.indexOf('-o');
+if (outputIndex >= 0 && args[outputIndex + 1]) {
+  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
+}
+console.log(JSON.stringify({ type: 'command_execution', command: 'npm run build && whoami' }));
 process.exit(0);
 `);
 
@@ -324,6 +357,50 @@ test('explicit codexPath requires trusted install dir unless insecure override i
       () => new CodexProvider(undefined, { codexPath }).execute('test', { sandbox: 'read-only' }),
       (error) => error && error.code === 'BINARY_VALIDATION_FAILED',
     );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('pins validated canonical binary path across symlink target changes', async () => {
+  if (process.platform === 'win32') {
+    return;
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
+  const targetA = join(tempDir, 'codex-target-a.mjs');
+  const targetB = join(tempDir, 'codex-target-b.mjs');
+  const codexLink = join(tempDir, 'codex-link.mjs');
+
+  try {
+    await writeFile(
+      targetA,
+      '#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst outputIndex = args.indexOf("-o");\nif (outputIndex >= 0 && args[outputIndex + 1]) { writeFileSync(args[outputIndex + 1], "A", "utf-8"); }\nprocess.exit(0);\n',
+      'utf-8',
+    );
+    await writeFile(
+      targetB,
+      '#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nconst args = process.argv.slice(2);\nconst outputIndex = args.indexOf("-o");\nif (outputIndex >= 0 && args[outputIndex + 1]) { writeFileSync(args[outputIndex + 1], "B", "utf-8"); }\nprocess.exit(0);\n',
+      'utf-8',
+    );
+    await chmod(targetA, 0o755);
+    await chmod(targetB, 0o755);
+    await symlink(targetA, codexLink);
+
+    const provider = new CodexProvider(undefined, {
+      codexPath: codexLink,
+      defaultTimeoutMs: 5000,
+      allowUntrustedCodexPath: true,
+    });
+
+    const first = await provider.execute('test', { sandbox: 'read-only' });
+    assert.equal(first, 'A');
+
+    await unlink(codexLink);
+    await symlink(targetB, codexLink);
+
+    const second = await provider.execute('test', { sandbox: 'read-only' });
+    assert.equal(second, 'A');
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

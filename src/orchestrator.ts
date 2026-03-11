@@ -271,50 +271,52 @@ export class Orchestrator {
       logDetail('Started: QA Engineer');
       logDetail('Started: Security Engineer');
       const evaluatorPhaseStartedAtMs = Date.now();
-      const [review, qa, security] = await Promise.all([
-        this.runEvaluatorSafely(
+      const reviewTask = this.runEvaluatorSafely(
+        'Code Reviewer',
+        () => this.runTimedAgent(
           'Code Reviewer',
-          () => this.runTimedAgent(
+          () => this.runEvaluatorWithRetry(
             'Code Reviewer',
-            () => this.runEvaluatorWithRetry(
-              'Code Reviewer',
-              () => reviewAgent.execute(context),
-            ),
+            () => reviewAgent.execute(context),
           ),
         ),
-        this.runEvaluatorSafely(
+      ).then((result) => {
+        this.logEvaluatorCompletion('Code Reviewer', result);
+        this.recordScore(scoreHistory.review, result.score);
+        return result;
+      });
+      const qaTask = this.runEvaluatorSafely(
+        'QA Engineer',
+        () => this.runTimedAgent(
           'QA Engineer',
-          () => this.runTimedAgent(
+          () => this.runEvaluatorWithRetry(
             'QA Engineer',
-            () => this.runEvaluatorWithRetry(
-              'QA Engineer',
-              () => qaAgent.execute(context),
-            ),
+            () => qaAgent.execute(context),
           ),
         ),
-        this.runEvaluatorSafely(
+      ).then((result) => {
+        this.logEvaluatorCompletion('QA Engineer', result);
+        this.recordScore(scoreHistory.qa, result.score);
+        return result;
+      });
+      const securityTask = this.runEvaluatorSafely(
+        'Security Engineer',
+        () => this.runTimedAgent(
           'Security Engineer',
-          () => this.runTimedAgent(
+          () => this.runEvaluatorWithRetry(
             'Security Engineer',
-            () => this.runEvaluatorWithRetry(
-              'Security Engineer',
-              () => securityAgent.execute(context),
-            ),
+            () => securityAgent.execute(context),
           ),
         ),
-      ]);
+      ).then((result) => {
+        this.logEvaluatorCompletion('Security Engineer', result);
+        this.recordScore(scoreHistory.security, result.score);
+        return result;
+      });
+      const [review, qa, security] = await Promise.all([reviewTask, qaTask, securityTask]);
       logDetail(
         `Parallel evaluator wall-clock time: ${this.formatDuration(Date.now() - evaluatorPhaseStartedAtMs)}.`,
       );
-      logDetail(`Review score: ${review.score ?? 'N/A'}/100`);
-      this.recordScore(scoreHistory.review, review.score);
-      this.logIssueCount(review);
-      logDetail(`QA score: ${qa.score ?? 'N/A'}/100`);
-      this.recordScore(scoreHistory.qa, qa.score);
-      this.logIssueCount(qa);
-      logDetail(`Security score: ${security.score ?? 'N/A'}/100`);
-      this.recordScore(scoreHistory.security, security.score);
-      this.logIssueCount(security);
 
       // Check for critical issues
       const hasCritical = this.hasCriticalIssues(review, qa, security);
@@ -1006,6 +1008,11 @@ export class Orchestrator {
       if (counts.info > 0) parts.push(`${counts.info} info`);
       logDetail(`Issues: ${parts.join(', ')}`);
     }
+  }
+
+  private logEvaluatorCompletion(evaluatorName: string, result: AgentResult): void {
+    logDetail(`${evaluatorName} score: ${result.score ?? 'N/A'}/100`);
+    this.logIssueCount(result);
   }
 
   private async runTimedAgent<T>(agentName: string, run: () => Promise<T>): Promise<T> {

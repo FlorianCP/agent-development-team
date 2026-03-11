@@ -32,7 +32,7 @@ type CodexErrorCode =
   | 'SECRET_LEAK_DETECTED';
 
 interface EffectiveCommandPolicy {
-  allowedPrefixes: string[];
+  allowedCommands: string[][];
   blockedPatterns: RegExp[];
 }
 
@@ -431,11 +431,11 @@ export class CodexProvider implements Provider {
       );
     }
 
-    const allowedPrefixes = policy.allowedCommandPrefixes
-      .map(prefix => this.normalizeCommand(prefix))
-      .filter(prefix => prefix.length > 0);
+    const allowedCommands = policy.allowedCommandPrefixes
+      .map(command => this.parseCommand(command))
+      .filter(command => command.length > 0);
 
-    if (allowedPrefixes.length === 0) {
+    if (allowedCommands.length === 0) {
       throw new CodexExecutionError(
         'High-trust execution requires at least one allowed command prefix.',
         'COMMAND_POLICY_VIOLATION',
@@ -454,7 +454,7 @@ export class CodexProvider implements Provider {
     });
 
     return {
-      allowedPrefixes,
+      allowedCommands,
       blockedPatterns,
     };
   }
@@ -489,7 +489,15 @@ export class CodexProvider implements Provider {
     }
 
     for (const command of audit.executedCommands) {
-      const normalized = this.normalizeCommand(command);
+      this.rejectShellMetacharacters(command);
+      const parsedCommand = this.parseCommand(command);
+      if (parsedCommand.length === 0) {
+        throw new CodexExecutionError(
+          `Command policy rejected empty command telemetry entry: ${command}`,
+          'COMMAND_POLICY_VIOLATION',
+        );
+      }
+      const normalized = parsedCommand.join(' ');
 
       for (const blockedPattern of policy.blockedPatterns) {
         if (blockedPattern.test(normalized)) {
@@ -500,8 +508,8 @@ export class CodexProvider implements Provider {
         }
       }
 
-      const allowed = policy.allowedPrefixes.some(
-        prefix => normalized === prefix || normalized.startsWith(`${prefix} `),
+      const allowed = policy.allowedCommands.some(
+        allowedCommand => this.argvEquals(parsedCommand, allowedCommand),
       );
 
       if (!allowed) {
@@ -513,8 +521,91 @@ export class CodexProvider implements Provider {
     }
   }
 
-  private normalizeCommand(command: string): string {
-    return command.trim().replace(/\s+/g, ' ').toLowerCase();
+  private argvEquals(left: string[], right: string[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    for (let index = 0; index < left.length; index++) {
+      if (left[index] !== right[index]) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private parseCommand(command: string): string[] {
+    const trimmed = command.trim();
+    if (trimmed.length === 0) {
+      return [];
+    }
+
+    const tokens: string[] = [];
+    let current = '';
+    let quote: '"' | '\'' | null = null;
+    let escaping = false;
+
+    for (let index = 0; index < trimmed.length; index++) {
+      const char = trimmed[index];
+
+      if (escaping) {
+        current += char;
+        escaping = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaping = true;
+        continue;
+      }
+
+      if (quote) {
+        if (char === quote) {
+          quote = null;
+          continue;
+        }
+        current += char;
+        continue;
+      }
+
+      if (char === '"' || char === '\'') {
+        quote = char;
+        continue;
+      }
+
+      if (/\s/.test(char)) {
+        if (current.length > 0) {
+          tokens.push(current.toLowerCase());
+          current = '';
+        }
+        continue;
+      }
+
+      current += char;
+    }
+
+    if (escaping || quote) {
+      throw new CodexExecutionError(
+        `Malformed command telemetry; unable to parse command: ${command}`,
+        'COMMAND_POLICY_VIOLATION',
+      );
+    }
+
+    if (current.length > 0) {
+      tokens.push(current.toLowerCase());
+    }
+
+    return tokens;
+  }
+
+  private rejectShellMetacharacters(command: string): void {
+    if (/[;&|`<>]/.test(command) || /\$\(/.test(command)) {
+      throw new CodexExecutionError(
+        `Command policy rejected shell metacharacters in command: ${command}`,
+        'COMMAND_POLICY_VIOLATION',
+      );
+    }
   }
 
   private restrictedPath(codexBinaryPath: string): string {
@@ -636,11 +727,7 @@ export class CodexProvider implements Provider {
       }
     }
 
-    // Return the original (symlink) path, not the resolved path.
-    // The OS resolves symlinks at exec time, so if codex is updated
-    // mid-run (e.g. brew upgrade), the symlink will point to the new
-    // binary rather than a stale Caskroom version directory.
-    return candidatePath;
+    return resolvedPath;
   }
 }
 

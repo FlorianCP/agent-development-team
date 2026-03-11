@@ -222,6 +222,41 @@ test('captures evaluator failures without cancelling parallel evaluator peers', 
   }
 });
 
+test('runs evaluator gates concurrently (wall-clock near max delay, not sum)', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
+
+  try {
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) return 'Implemented changes.';
+      if (prompt.includes('senior Code Reviewer')) {
+        await delay(200);
+        return jsonBlock({ score: 79, summary: 'Below threshold.', issues: [] });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        await delay(300);
+        return jsonBlock({ score: 95, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        await delay(400);
+        return jsonBlock({ score: 95, summary: 'Security passed.', issues: [] });
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const startedAt = Date.now();
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(success, false);
+    assert.ok(elapsedMs >= 350, `expected elapsed time >= 350ms, got ${elapsedMs}ms`);
+    assert.ok(elapsedMs < 850, `expected elapsed time < 850ms, got ${elapsedMs}ms`);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test('fails quality gate when evaluator score is out of range across retries', async () => {
   const outputDir = await mkdtemp(join(tmpdir(), 'adt-orch-test-'));
   let reviewerCalls = 0;
