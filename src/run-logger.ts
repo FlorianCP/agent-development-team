@@ -20,6 +20,7 @@ interface LoggedIssue {
 }
 
 interface LoggedInvocationEntry {
+  eventType: 'provider_invocation';
   agentName: string;
   timestamp: string;
   promptHash: string;
@@ -27,6 +28,28 @@ interface LoggedInvocationEntry {
   score: number | string | null;
   issues: LoggedIssue[];
   durationMs: number;
+  error?: string;
+}
+
+interface RunLoggerEventInput {
+  eventType: string;
+  agentName?: string;
+  phase?: string;
+  iteration?: number;
+  durationMs?: number;
+  details?: Record<string, unknown>;
+  timestamp?: string;
+  error?: string;
+}
+
+interface LoggedEventEntry {
+  eventType: string;
+  timestamp: string;
+  agentName?: string;
+  phase?: string;
+  iteration?: number;
+  durationMs?: number;
+  details?: Record<string, unknown>;
   error?: string;
 }
 
@@ -46,14 +69,28 @@ export class RunLogger {
 
   async logInvocation(input: RunLoggerEntryInput): Promise<void> {
     const entry = this.createEntry(input);
-    const line = `${JSON.stringify(entry)}\n`;
-    this.writeChain = this.writeChain.then(() => appendFile(this.filePath, line, 'utf-8'));
-    await this.writeChain;
+    await this.writeEntry(entry);
+  }
+
+  async logEvent(input: RunLoggerEventInput): Promise<void> {
+    const entry: LoggedEventEntry = {
+      eventType: input.eventType,
+      timestamp: input.timestamp ?? new Date().toISOString(),
+      ...(input.agentName ? { agentName: input.agentName } : {}),
+      ...(input.phase ? { phase: input.phase } : {}),
+      ...(typeof input.iteration === 'number' ? { iteration: input.iteration } : {}),
+      ...(typeof input.durationMs === 'number' ? { durationMs: input.durationMs } : {}),
+      ...(input.details ? { details: input.details } : {}),
+      ...(input.error ? { error: input.error } : {}),
+    };
+
+    await this.writeEntry(entry);
   }
 
   private createEntry(input: RunLoggerEntryInput): LoggedInvocationEntry {
     const parsed = parseAgentJson(input.output);
     return {
+      eventType: 'provider_invocation',
       agentName: input.agentName,
       timestamp: input.timestamp ?? new Date().toISOString(),
       promptHash: createHash('sha256').update(input.prompt).digest('hex'),
@@ -63,6 +100,12 @@ export class RunLogger {
       durationMs: input.durationMs,
       ...(input.error ? { error: input.error } : {}),
     };
+  }
+
+  private async writeEntry(entry: LoggedInvocationEntry | LoggedEventEntry): Promise<void> {
+    const line = `${JSON.stringify(entry)}\n`;
+    this.writeChain = this.writeChain.then(() => appendFile(this.filePath, line, 'utf-8'));
+    await this.writeChain;
   }
 
   private extractScore(parsed: Record<string, unknown> | null, output: string): number | string | null {

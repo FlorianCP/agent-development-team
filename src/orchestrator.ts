@@ -45,10 +45,15 @@ interface VerificationCheck {
 }
 
 type ReviewReportAgentKey = 'developer' | 'reviewer' | 'qa' | 'security';
+type ExtendedReviewReportAgentKey =
+  | ReviewReportAgentKey
+  | 'requirements-engineer'
+  | 'architect'
+  | 'product-owner';
 
 interface ReviewReportEntry {
   agentName: string;
-  agentKey: ReviewReportAgentKey;
+  agentKey: ExtendedReviewReportAgentKey;
   iteration: number;
   score: string;
   summary: string;
@@ -58,6 +63,7 @@ interface ReviewReportEntry {
 export class Orchestrator {
   private provider: Provider;
   private config: ADTConfig;
+  private activeRunLogger?: RunLogger;
 
   constructor(provider: Provider, config: ADTConfig) {
     this.provider = provider;
@@ -85,6 +91,7 @@ export class Orchestrator {
       metrics: this.createRunMetrics(),
       runLogger,
     };
+    this.activeRunLogger = runLogger;
 
     console.log('\n🤖 Agent Development Team v0.1.0');
     console.log('═'.repeat(60));
@@ -139,6 +146,7 @@ export class Orchestrator {
       metrics: this.createRunMetrics(),
       runLogger,
     };
+    this.activeRunLogger = runLogger;
 
     console.log('\n🤖 Agent Development Team — Self-Improvement Mode');
     console.log('═'.repeat(60));
@@ -188,6 +196,11 @@ export class Orchestrator {
 
   private async requirementsPhase(context: ProjectContext, rl: import('node:readline').Interface): Promise<void> {
     logStep('📋 Requirements Engineering');
+    await this.logRunEvent(context, {
+      eventType: 'phase_started',
+      phase: 'requirements',
+      iteration: context.iteration,
+    });
 
     const reAgent = new RequirementsEngineer(this.provider);
 
@@ -216,19 +229,64 @@ export class Orchestrator {
       'Requirements Engineer (PRD generation)',
       () => reAgent.createPRD(context, answers),
     );
+    await this.writeReviewReport(
+      context,
+      this.createNarrativeReviewReport(
+        'Requirements Engineer',
+        'requirements-engineer',
+        0,
+        [
+          `Generated ${questions.length} clarifying question(s).`,
+          '',
+          'Questions:',
+          ...questions.map((question, index) => `${index + 1}. ${question}`),
+          '',
+          'Generated PRD:',
+          '',
+          context.prd,
+        ].join('\n'),
+      ),
+    );
     log('✅', 'PRD created.');
+    await this.logRunEvent(context, {
+      eventType: 'phase_completed',
+      phase: 'requirements',
+      iteration: context.iteration,
+      details: {
+        questionsGenerated: questions.length,
+      },
+    });
   }
 
   private async architecturePhase(context: ProjectContext): Promise<void> {
     logStep('🏗️  Architecture');
+    await this.logRunEvent(context, {
+      eventType: 'phase_started',
+      phase: 'architecture',
+      iteration: context.iteration,
+    });
 
     const archAgent = new Architect(this.provider);
     log('🔍', 'Designing system architecture...');
 
     const result = await this.runTimedAgent('Architect', () => archAgent.execute(context));
     context.architecture = result.output;
+    await this.writeReviewReport(
+      context,
+      this.createNarrativeReviewReport(
+        'Architect',
+        'architect',
+        0,
+        result.output,
+      ),
+    );
 
     log('✅', 'Architecture document created.');
+    await this.logRunEvent(context, {
+      eventType: 'phase_completed',
+      phase: 'architecture',
+      iteration: context.iteration,
+    });
   }
 
   private async approvalPhase(context: ProjectContext, rl: import('node:readline').Interface): Promise<boolean> {
@@ -254,6 +312,11 @@ export class Orchestrator {
       context.iteration++;
       const iterationStartedAtMs = Date.now();
       logStep(`🔄 Development Iteration ${context.iteration}/${context.maxIterations}`);
+      await this.logRunEvent(context, {
+        eventType: 'iteration_started',
+        phase: 'development',
+        iteration: context.iteration,
+      });
 
       // Git checkpoint before developer modifies code (self-improve only)
       if (this.config.gitCheckpoints && context.isSelfImprove) {
@@ -411,6 +474,10 @@ export class Orchestrator {
           'Product Owner',
           () => poAgent.execute(context),
         ),
+      );
+      await this.writeReviewReport(
+        context,
+        this.createEvaluatorReviewReport(context, 'Product Owner', 'product-owner', poResult),
       );
       logDetail(`PO score: ${poResult.score ?? 'N/A'}/100`);
       this.recordScore(scoreHistory.productOwner, poResult.score);
@@ -686,6 +753,12 @@ export class Orchestrator {
     if (!context.runLogger) {
       context.runLogger = await RunLogger.create(resolve(context.docsDir, '..'));
     }
+    this.activeRunLogger = context.runLogger;
+    await this.logRunEvent(context, {
+      eventType: 'workflow_started',
+      phase: modeLabel.toLowerCase(),
+      iteration: context.iteration,
+    });
 
     const poApproved = await this.developmentLoop(context, rl);
     let verificationSuccess = true;
@@ -709,6 +782,16 @@ export class Orchestrator {
     }
 
     this.logRunSummary(context, runStartedAtMs);
+    await this.logRunEvent(context, {
+      eventType: 'workflow_completed',
+      phase: modeLabel.toLowerCase(),
+      iteration: context.iteration,
+      details: {
+        productOwnerApproved: poApproved,
+        verificationSuccess,
+        documentationSuccess,
+      },
+    });
 
     return poApproved && verificationSuccess && documentationSuccess;
   }
@@ -717,11 +800,29 @@ export class Orchestrator {
     await mkdir(context.docsDir, { recursive: true });
 
     if (context.prd) {
-      await writeFile(join(context.docsDir, 'PRD.md'), context.prd, 'utf-8');
+      const prdPath = join(context.docsDir, 'PRD.md');
+      await writeFile(prdPath, context.prd, 'utf-8');
+      await this.logRunEvent(context, {
+        eventType: 'document_written',
+        phase: 'requirements',
+        iteration: context.iteration,
+        details: {
+          path: prdPath,
+        },
+      });
     }
 
     if (context.architecture) {
-      await writeFile(join(context.docsDir, 'ARCHITECTURE.md'), context.architecture, 'utf-8');
+      const architecturePath = join(context.docsDir, 'ARCHITECTURE.md');
+      await writeFile(architecturePath, context.architecture, 'utf-8');
+      await this.logRunEvent(context, {
+        eventType: 'document_written',
+        phase: 'architecture',
+        iteration: context.iteration,
+        details: {
+          path: architecturePath,
+        },
+      });
     }
   }
 
@@ -744,6 +845,15 @@ export class Orchestrator {
         '⚠️',
         `${evaluatorName} returned invalid evaluation data (attempt ${attempt}/${maxAttempts}).`,
       );
+      await this.logActiveRunEvent({
+        eventType: 'evaluator_retry',
+        agentName: evaluatorName,
+        details: {
+          attempt,
+          maxAttempts,
+          reason: 'invalid_evaluation_data',
+        },
+      });
       if (attempt < maxAttempts) {
         logDetail('Retrying evaluator once...');
       }
@@ -845,6 +955,11 @@ export class Orchestrator {
       `${evaluatorName} failed unexpectedly. Capturing failure as critical feedback.`,
     );
     logDetail(`${evaluatorName} error: ${message}`);
+    void this.logActiveRunEvent({
+      eventType: 'evaluator_failed',
+      agentName: evaluatorName,
+      error: message,
+    });
 
     return {
       success: false,
@@ -909,10 +1024,25 @@ export class Orchestrator {
     };
   }
 
+  private createNarrativeReviewReport(
+    agentName: string,
+    agentKey: Exclude<ExtendedReviewReportAgentKey, ReviewReportAgentKey>,
+    iteration: number,
+    output: string,
+  ): ReviewReportEntry {
+    return {
+      agentName,
+      agentKey,
+      iteration,
+      score: 'N/A',
+      summary: this.sanitizeForHumanReport(this.renderFullReportSummary(output)),
+    };
+  }
+
   private createEvaluatorReviewReport(
     context: ProjectContext,
     agentName: string,
-    agentKey: Exclude<ReviewReportAgentKey, 'developer'>,
+    agentKey: Exclude<ExtendedReviewReportAgentKey, 'developer' | 'requirements-engineer' | 'architect'>,
     result: AgentResult,
   ): ReviewReportEntry {
     return {
@@ -935,6 +1065,15 @@ export class Orchestrator {
 
     await mkdir(reviewsDir, { recursive: true });
     await writeFile(reportPath, this.sanitizeForHumanReport(content), 'utf-8');
+    await this.logRunEvent(context, {
+      eventType: 'report_written',
+      agentName: entry.agentName,
+      iteration: entry.iteration,
+      details: {
+        path: reportPath,
+        agentKey: entry.agentKey,
+      },
+    });
     logDetail(`Review report written: ${reportPath}`);
   }
 
@@ -1183,13 +1322,31 @@ export class Orchestrator {
 
   private async runTimedAgent<T>(agentName: string, run: () => Promise<T>): Promise<T> {
     const startedAtMs = Date.now();
+    await this.logActiveRunEvent({
+      eventType: 'agent_started',
+      agentName,
+    });
 
     try {
       const result = await run();
-      logDetail(`${agentName} completed in ${this.formatDuration(Date.now() - startedAtMs)}.`);
+      const durationMs = Date.now() - startedAtMs;
+      await this.logActiveRunEvent({
+        eventType: 'agent_completed',
+        agentName,
+        durationMs,
+      });
+      logDetail(`${agentName} completed in ${this.formatDuration(durationMs)}.`);
       return result;
     } catch (error) {
-      logDetail(`${agentName} failed after ${this.formatDuration(Date.now() - startedAtMs)}.`);
+      const durationMs = Date.now() - startedAtMs;
+      const message = error instanceof Error ? error.message : String(error);
+      await this.logActiveRunEvent({
+        eventType: 'agent_failed',
+        agentName,
+        durationMs,
+        error: message,
+      });
+      logDetail(`${agentName} failed after ${this.formatDuration(durationMs)}.`);
       throw error;
     }
   }
@@ -1299,6 +1456,15 @@ export class Orchestrator {
       outcome,
     });
     logDetail(`Iteration ${iteration} completed in ${this.formatDuration(durationMs)} (${outcome}).`);
+    void this.logActiveRunEvent({
+      eventType: 'iteration_completed',
+      phase: 'development',
+      iteration,
+      durationMs,
+      details: {
+        outcome,
+      },
+    });
   }
 
   private logScoreTrends(scoreHistory: ScoreHistory): void {
@@ -1370,6 +1536,41 @@ export class Orchestrator {
 
     if (scoreHistory.review.length > 0 || scoreHistory.qa.length > 0 || scoreHistory.security.length > 0) {
       this.logScoreTrends(scoreHistory);
+    }
+  }
+
+  private async logRunEvent(
+    context: ProjectContext,
+    input: {
+      eventType: string;
+      agentName?: string;
+      phase?: string;
+      iteration?: number;
+      durationMs?: number;
+      details?: Record<string, unknown>;
+      error?: string;
+    },
+  ): Promise<void> {
+    try {
+      await context.runLogger?.logEvent(input);
+    } catch {
+      // Observability failures should not block orchestration.
+    }
+  }
+
+  private async logActiveRunEvent(input: {
+    eventType: string;
+    agentName?: string;
+    phase?: string;
+    iteration?: number;
+    durationMs?: number;
+    details?: Record<string, unknown>;
+    error?: string;
+  }): Promise<void> {
+    try {
+      await this.activeRunLogger?.logEvent(input);
+    } catch {
+      // Observability failures should not block orchestration.
     }
   }
 
