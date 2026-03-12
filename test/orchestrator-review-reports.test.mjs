@@ -109,7 +109,11 @@ test('writes developer and evaluator review reports to workspace docs/reviews', 
     assert.match(reviewerReport, /Tighten naming\. \(src\/orchestrator\.ts\) -> Use a clearer helper name\./);
     assert.match(
       reviewerReport,
-      /Suggested self-improve command: `npm run start -- self-improve "Fix this minor issue in src\/orchestrator\.ts: Tighten naming\. Suggested fix: Use a clearer helper name\."`/,
+      /Suggested self-improve prompt: Fix this minor issue in src\/orchestrator\.ts: Tighten naming\. Suggested fix: Use a clearer helper name\./,
+    );
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve command:\n  ```sh\n  npm run start -- self-improve 'Fix this minor issue in src\/orchestrator\.ts: Tighten naming\. Suggested fix: Use a clearer helper name\.'\n  ```/,
     );
 
     assert.match(qaReport, /# QA Engineer Report/);
@@ -297,20 +301,79 @@ test('includes suggested self-improve commands for issues across all severities'
 
     assert.match(
       reviewerReport,
-      /Suggested self-improve command: `npm run start -- self-improve "Fix this critical issue in src\/agents\/agent\.ts: Handle null parser result\. Suggested fix: Add a null guard before reading score\."`/,
+      /Suggested self-improve command:\n  ```sh\n  npm run start -- self-improve 'Fix this critical issue in src\/agents\/agent\.ts: Handle null parser result\. Suggested fix: Add a null guard before reading score\.'\n  ```/,
     );
     assert.match(
       reviewerReport,
-      /Suggested self-improve command: `npm run start -- self-improve "Fix this major issue: Retry flow lacks assertion coverage\. Suggested fix: Add a retry-path test\."`/,
+      /Suggested self-improve command:\n  ```sh\n  npm run start -- self-improve 'Fix this major issue: Retry flow lacks assertion coverage\. Suggested fix: Add a retry-path test\.'\n  ```/,
     );
     assert.match(
       reviewerReport,
-      /Suggested self-improve command: `npm run start -- self-improve "Fix this minor issue: Rename helper for clarity\."`/,
+      /Suggested self-improve command:\n  ```sh\n  npm run start -- self-improve 'Fix this minor issue: Rename helper for clarity\.'\n  ```/,
     );
     assert.match(
       reviewerReport,
-      /Suggested self-improve command: `npm run start -- self-improve "Fix this info issue in README\.md: Document the report artifact location\."`/,
+      /Suggested self-improve command:\n  ```sh\n  npm run start -- self-improve 'Fix this info issue in README\.md: Document the report artifact location\.'\n  ```/,
     );
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('shell-escapes metacharacters in suggested self-improve commands', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-review-reports-shell-escape-test-'));
+
+  try {
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) {
+        return 'Implemented changes.\nConfidence: 90';
+      }
+      if (prompt.includes('senior Code Reviewer')) {
+        return jsonBlock({
+          score: 91,
+          summary: 'Review found one issue.',
+          issues: [
+            {
+              severity: 'major',
+              description: "Escape $HOME, `whoami`, and teammate's note safely.",
+              file: 'src/orchestrator.ts',
+              suggestion: "Wrap it's prompt without running `echo $HOME`.",
+            },
+          ],
+        });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 93, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 96, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 95, approved: true, summary: 'Approved.', issues: [] });
+      }
+      if (prompt.includes('senior Documentation Writer')) {
+        return '# Customer Guide\n\nUse it.';
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+
+    assert.equal(success, true);
+
+    const reviewerReport = await readFile(
+      join(outputDir, '.test-docs', 'reviews', 'iteration-1-reviewer.md'),
+      'utf-8',
+    );
+    const expectedCommand =
+      "npm run start -- self-improve 'Fix this major issue in src/orchestrator.ts: Escape $HOME, `whoami`, and teammate'\"'\"'s note safely. Suggested fix: Wrap it'\"'\"'s prompt without running `echo $HOME`.'";
+
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve prompt: Fix this major issue in src\/orchestrator\.ts: Escape \$HOME, `whoami`, and teammate's note safely\. Suggested fix: Wrap it's prompt without running `echo \$HOME`\./,
+    );
+    assert.equal(reviewerReport.includes(expectedCommand), true);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

@@ -975,9 +975,14 @@ export class Orchestrator {
     const location = issue.file ? ` (${issue.file})` : '';
     const suggestion = issue.suggestion ? ` -> ${issue.suggestion}` : '';
     const prompt = this.createSelfImprovePrompt(issue);
+    const command = `npm run start -- self-improve ${this.quoteShellArgument(prompt)}`;
     return [
       `- ${issue.description}${location}${suggestion}`,
-      `  Suggested self-improve command: \`npm run start -- self-improve "${this.escapeShellDoubleQuotes(prompt)}"\``,
+      `  Suggested self-improve prompt: ${prompt}`,
+      '  Suggested self-improve command:',
+      '  ```sh',
+      `  ${command}`,
+      '  ```',
     ];
   }
 
@@ -989,8 +994,8 @@ export class Orchestrator {
       .trim();
   }
 
-  private escapeShellDoubleQuotes(value: string): string {
-    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  private quoteShellArgument(value: string): string {
+    return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   }
 
   private async publishIterationReport(
