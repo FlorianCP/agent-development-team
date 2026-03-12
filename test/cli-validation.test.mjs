@@ -17,6 +17,20 @@ function runCli(args) {
   });
 }
 
+test('shows help for --help', () => {
+  const result = runCli(['--help']);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Agent Development Team \(ADT\) v0\.1\.0/);
+  assert.match(result.stdout, /Usage:/);
+  assert.match(result.stdout, /adt self-improve <requirement>/);
+});
+
+test('shows version for --version', () => {
+  const result = runCli(['--version']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), '0.1.0');
+});
+
 test('rejects non-numeric --max-iterations', () => {
   const result = runCli(['self-improve', 'test improvement', '--max-iterations', 'foo']);
   assert.equal(result.status, 1);
