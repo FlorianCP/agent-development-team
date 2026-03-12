@@ -25,7 +25,18 @@ import { SecurityEngineer } from './agents/security.js';
 import { ProductOwner } from './agents/product-owner.js';
 import { DocumentationWriter } from './agents/documentation-writer.js';
 import { RunLogger } from './run-logger.js';
-import { createReadlineInterface, askQuestion, askYesNo, log, logStep, logDetail } from './utils.js';
+import {
+  createReadlineInterface,
+  askQuestion,
+  askYesNo,
+  isPathInside,
+  log,
+  logStep,
+  logDetail,
+  sanitizeForTerminal,
+  stripTerminalControlChars,
+  toUntrustedDataBlock,
+} from './utils.js';
 
 interface VerificationCheck {
   label: string;
@@ -135,7 +146,7 @@ export class Orchestrator {
     log('📄', `Using runtime docs: ${docsDir}`);
 
     // Skip requirements/architecture for self-improvement — go straight to development
-    context.prd = `# Self-Improvement PRD\n\n## Requirement\n${requirement}\n\n## Context\nThis is the ADT codebase itself. Make the requested improvements while maintaining the existing architecture and conventions.\n\n## Acceptance Criteria\n- The requested improvement is implemented\n- Existing functionality is not broken\n- Code follows project conventions\n- npm run build succeeds`;
+    context.prd = `# Self-Improvement PRD\n\n## Requirement\n${toUntrustedDataBlock(requirement)}\n\n## Context\nThis is the ADT codebase itself. Make the requested improvements while maintaining the existing architecture and conventions.\n\n## Acceptance Criteria\n- The requested improvement is implemented\n- Existing functionality is not broken\n- Code follows project conventions\n- npm run build succeeds`;
     context.architecture = `# ADT Architecture (Self-Improvement Baseline)
 
 ## Core Boundaries
@@ -191,7 +202,7 @@ export class Orchestrator {
 
     for (let i = 0; i < questions.length; i++) {
       const question = questions[i];
-      console.log(`   ${i + 1}. ${question}`);
+      console.log(`   ${i + 1}. ${sanitizeForTerminal(question)}`);
       const answer = await askQuestion(rl, `      > `);
       if (answer) {
         answers.set(question, answer);
@@ -770,7 +781,7 @@ export class Orchestrator {
       return null;
     }
 
-    return markerMatch[1].trim() || 'Developer requested a restricted operation.';
+    return sanitizeForTerminal(markerMatch[1].trim()) || 'Developer requested a restricted operation.';
   }
 
   private hasCriticalIssues(...results: AgentResult[]): boolean {
@@ -894,7 +905,7 @@ export class Orchestrator {
       agentKey: 'developer',
       iteration: context.iteration,
       score: this.extractDeveloperConfidenceScore(result.output) ?? 'N/A',
-      summary: this.renderFullReportSummary(result.output),
+      summary: this.sanitizeForHumanReport(this.renderFullReportSummary(result.output)),
     };
   }
 
@@ -909,8 +920,8 @@ export class Orchestrator {
       agentKey,
       iteration: context.iteration,
       score: this.formatOptionalScore(result.score),
-      summary: this.renderFullReportSummary(result.output),
-      issues: result.issues ?? [],
+      summary: this.sanitizeForHumanReport(this.renderFullReportSummary(result.output)),
+      issues: this.sanitizeIssuesForHumanReport(result.issues ?? []),
     };
   }
 
@@ -923,20 +934,20 @@ export class Orchestrator {
     const content = this.renderReviewReport(entry);
 
     await mkdir(reviewsDir, { recursive: true });
-    await writeFile(reportPath, content, 'utf-8');
+    await writeFile(reportPath, this.sanitizeForHumanReport(content), 'utf-8');
     logDetail(`Review report written: ${reportPath}`);
   }
 
   private renderReviewReport(entry: ReviewReportEntry): string {
     return [
-      `# ${entry.agentName} Report`,
+      `# ${this.sanitizeForHumanReport(entry.agentName)} Report`,
       '',
-      `- Agent: ${entry.agentName}`,
+      `- Agent: ${this.sanitizeForHumanReport(entry.agentName)}`,
       `- Iteration: ${entry.iteration}`,
-      `- Score: ${entry.score}`,
+      `- Score: ${this.sanitizeForHumanReport(entry.score)}`,
       '',
       '## Summary',
-      entry.summary,
+      this.sanitizeForHumanReport(entry.summary),
       '',
       '## Issues By Severity',
       this.renderReportIssueGroups(entry.issues ?? []),
@@ -972,24 +983,27 @@ export class Orchestrator {
   }
 
   private renderReportIssue(issue: Issue): string[] {
-    const location = issue.file ? ` (${issue.file})` : '';
-    const suggestion = issue.suggestion ? ` -> ${issue.suggestion}` : '';
+    const description = this.sanitizeForHumanReport(issue.description);
+    const file = issue.file ? this.sanitizeForHumanReport(issue.file) : undefined;
+    const suggestionText = issue.suggestion ? this.sanitizeForHumanReport(issue.suggestion) : undefined;
+    const location = file ? ` (${file})` : '';
+    const suggestion = suggestionText ? ` -> ${suggestionText}` : '';
     const prompt = this.createSelfImprovePrompt(issue);
     const command = `npm run start -- self-improve ${this.quoteShellArgument(prompt)}`;
     return [
-      `- ${issue.description}${location}${suggestion}`,
-      `  Suggested self-improve prompt: ${prompt}`,
+      `- ${description}${location}${suggestion}`,
+      `  Suggested self-improve prompt: ${this.sanitizeForHumanReport(prompt)}`,
       '  Suggested self-improve command:',
       '  ```sh',
-      `  ${command}`,
+      `  ${this.sanitizeForHumanReport(command)}`,
       '  ```',
     ];
   }
 
   private createSelfImprovePrompt(issue: Issue): string {
-    const location = issue.file ? ` in ${issue.file}` : '';
-    const suggestion = issue.suggestion ? ` Suggested fix: ${issue.suggestion}` : '';
-    return `Fix this ${issue.severity} issue${location}: ${issue.description}${suggestion}`
+    const location = issue.file ? ` in ${stripTerminalControlChars(issue.file)}` : '';
+    const suggestion = issue.suggestion ? ` Suggested fix: ${stripTerminalControlChars(issue.suggestion)}` : '';
+    return `Fix this ${issue.severity} issue${location}: ${stripTerminalControlChars(issue.description)}${suggestion}`
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -1007,11 +1021,11 @@ export class Orchestrator {
     const reportPath = join(context.docsDir, 'ITERATION_REPORT.md');
 
     await mkdir(context.docsDir, { recursive: true });
-    await writeFile(reportPath, report, 'utf-8');
+    await writeFile(reportPath, this.sanitizeForHumanReport(report), 'utf-8');
 
     log('📄', 'Iteration report generated (max iterations reached).');
     logDetail(`Report: ${reportPath}`);
-    console.log(`\n${report}\n`);
+    console.log(`\n${sanitizeForTerminal(report)}\n`);
   }
 
   private renderIterationReport(
@@ -1083,10 +1097,13 @@ export class Orchestrator {
 
     for (const { name, result } of evaluations) {
       for (const issue of result.issues ?? []) {
-        const location = issue.file ? ` (${issue.file})` : '';
-        const suggestion = issue.suggestion ? ` -> ${issue.suggestion}` : '';
+        const description = this.sanitizeForHumanReport(issue.description);
+        const file = issue.file ? this.sanitizeForHumanReport(issue.file) : undefined;
+        const suggestionText = issue.suggestion ? this.sanitizeForHumanReport(issue.suggestion) : undefined;
+        const location = file ? ` (${file})` : '';
+        const suggestion = suggestionText ? ` -> ${suggestionText}` : '';
         const prefix = includeAgentPrefix ? `[${name}] ` : '';
-        grouped[issue.severity].push(`${prefix}${issue.description}${location}${suggestion}`);
+        grouped[issue.severity].push(`${prefix}${description}${location}${suggestion}`);
       }
     }
 
@@ -1449,7 +1466,19 @@ export class Orchestrator {
   }
 
   private isPathInside(baseDir: string, targetPath: string): boolean {
-    const rel = relative(baseDir, targetPath);
-    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`));
+    return isPathInside(baseDir, targetPath);
+  }
+
+  private sanitizeForHumanReport(value: string): string {
+    return stripTerminalControlChars(value);
+  }
+
+  private sanitizeIssuesForHumanReport(issues: Issue[]): Issue[] {
+    return issues.map(issue => ({
+      ...issue,
+      description: this.sanitizeForHumanReport(issue.description),
+      file: issue.file ? this.sanitizeForHumanReport(issue.file) : undefined,
+      suggestion: issue.suggestion ? this.sanitizeForHumanReport(issue.suggestion) : undefined,
+    }));
   }
 }

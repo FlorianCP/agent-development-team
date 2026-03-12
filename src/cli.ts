@@ -2,11 +2,12 @@
 
 import { parseArgs } from 'node:util';
 import { readFile, realpath } from 'node:fs/promises';
-import { relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { CodexProvider } from './providers/codex.js';
 import { Orchestrator } from './orchestrator.js';
 import type { ADTConfig } from './types.js';
 import { DEFAULT_CONFIG } from './types.js';
+import { isPathInside } from './utils.js';
 
 const HELP = `
 Agent Development Team (ADT) v0.1.0
@@ -188,8 +189,7 @@ async function resolveRealpath(path: string): Promise<string> {
 }
 
 function isWithinDirectory(baseDir: string, targetPath: string): boolean {
-  const rel = relative(baseDir, targetPath);
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('../') && rel !== '..');
+  return isPathInside(baseDir, targetPath);
 }
 
 function isNodeErrno(error: unknown, code: string): boolean {

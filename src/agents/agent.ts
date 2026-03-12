@@ -1,6 +1,6 @@
 import type { Provider, ProviderOptions } from '../providers/provider.js';
 import type { AgentResult, ProjectContext } from '../types.js';
-import { parseAgentJson } from '../utils.js';
+import { parseAgentJson, toUntrustedDataBlock } from '../utils.js';
 
 interface ParseResultOptions {
   requireJson?: boolean;
@@ -162,11 +162,7 @@ IMPORTANT: Your previous response was malformed. Respond with valid JSON in a \`
   }
 
   protected toUntrustedDataBlock(content: string): string {
-    const escaped = content
-      .replaceAll('<<<BEGIN_UNTRUSTED_DATA>>>', '<BEGIN_UNTRUSTED_DATA_ESCAPED>')
-      .replaceAll('<<<END_UNTRUSTED_DATA>>>', '<END_UNTRUSTED_DATA_ESCAPED>')
-      .replaceAll('```', '` ` `');
-    return `<<<BEGIN_UNTRUSTED_DATA>>>\n${escaped}\n<<<END_UNTRUSTED_DATA>>>`;
+    return toUntrustedDataBlock(content);
   }
 
   private excerpt(content: string): string {

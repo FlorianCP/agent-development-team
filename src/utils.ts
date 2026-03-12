@@ -1,4 +1,12 @@
 import * as readline from 'node:readline';
+import * as path from 'node:path';
+
+interface PathApi {
+  relative(from: string, to: string): string;
+  isAbsolute(path: string): boolean;
+  parse(path: string): { root: string };
+  sep: string;
+}
 
 export function createReadlineInterface(): readline.Interface {
   return readline.createInterface({
@@ -50,16 +58,60 @@ export function parseAgentJson(text: string): Record<string, unknown> | null {
   }
 }
 
+export function toUntrustedDataBlock(content: string): string {
+  const escaped = content
+    .replaceAll('<<<BEGIN_UNTRUSTED_DATA>>>', '<BEGIN_UNTRUSTED_DATA_ESCAPED>')
+    .replaceAll('<<<END_UNTRUSTED_DATA>>>', '<END_UNTRUSTED_DATA_ESCAPED>')
+    .replaceAll('```', '` ` `');
+  return `<<<BEGIN_UNTRUSTED_DATA>>>\n${escaped}\n<<<END_UNTRUSTED_DATA>>>`;
+}
+
+export function stripTerminalControlChars(value: string): string {
+  return value
+    .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, '')
+    .replace(/\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    .replace(/[\u0000-\u0008\u000B-\u000D\u000E-\u001F\u007F-\u009F]/g, '');
+}
+
+export function sanitizeForTerminal(value: string): string {
+  return stripTerminalControlChars(value);
+}
+
+export function isPathInside(baseDir: string, targetPath: string, pathApi: PathApi = path): boolean {
+  const baseRoot = normalizePathRoot(baseDir, pathApi);
+  const targetRoot = normalizePathRoot(targetPath, pathApi);
+
+  if (baseRoot !== targetRoot) {
+    return false;
+  }
+
+  const rel = pathApi.relative(baseDir, targetPath);
+  if (rel === '') {
+    return true;
+  }
+
+  if (pathApi.isAbsolute(rel)) {
+    return false;
+  }
+
+  return rel !== '..' && !rel.startsWith(`..${pathApi.sep}`);
+}
+
+function normalizePathRoot(value: string, pathApi: PathApi): string {
+  const root = pathApi.parse(value).root;
+  return pathApi.sep === '\\' ? root.toLowerCase() : root;
+}
+
 export function log(icon: string, message: string): void {
-  console.log(`${icon} ${message}`);
+  console.log(`${icon} ${sanitizeForTerminal(message)}`);
 }
 
 export function logStep(message: string): void {
   console.log(`\n${'─'.repeat(60)}`);
-  console.log(`  ${message}`);
+  console.log(`  ${sanitizeForTerminal(message)}`);
   console.log(`${'─'.repeat(60)}`);
 }
 
 export function logDetail(message: string): void {
-  console.log(`   ${message}`);
+  console.log(`   ${sanitizeForTerminal(message)}`);
 }

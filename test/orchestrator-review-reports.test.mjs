@@ -378,3 +378,59 @@ test('shell-escapes metacharacters in suggested self-improve commands', async ()
     await rm(outputDir, { recursive: true, force: true });
   }
 });
+
+test('sanitizes terminal control characters in human-facing review reports', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-review-sanitize-test-'));
+
+  try {
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) {
+        return 'Implemented changes.\u001B[31m hidden\u001B[0m\nConfidence: 90';
+      }
+      if (prompt.includes('senior Code Reviewer')) {
+        return jsonBlock({
+          score: 91,
+          summary: 'Review\u001B]52;c;Zm9v\u0007 passed.',
+          issues: [
+            {
+              severity: 'major',
+              description: 'Strip \u001B[2J terminal clears.',
+              suggestion: 'Avoid \u0008 control chars.',
+            },
+          ],
+        });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 93, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 96, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 95, approved: true, summary: 'Approved.', issues: [] });
+      }
+      if (prompt.includes('senior Documentation Writer')) {
+        return '# Customer Guide\n\nUse it.';
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+
+    assert.equal(success, true);
+
+    const reviewsDir = join(outputDir, '.test-docs', 'reviews');
+    const developerReport = await readFile(join(reviewsDir, 'iteration-1-developer.md'), 'utf-8');
+    const reviewerReport = await readFile(join(reviewsDir, 'iteration-1-reviewer.md'), 'utf-8');
+
+    assert.equal(developerReport.includes('\u001B['), false);
+    assert.equal(reviewerReport.includes('\u001B['), false);
+    assert.equal(reviewerReport.includes('\u001B]52'), false);
+    assert.equal(reviewerReport.includes('\u0008'), false);
+    assert.match(reviewerReport, /Review passed\./);
+    assert.match(reviewerReport, /Strip\s+terminal clears\./);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
