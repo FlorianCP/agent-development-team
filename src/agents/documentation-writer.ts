@@ -39,7 +39,7 @@ Keep it practical and easy for customers to read quickly.
 Output ONLY the Markdown content. Do not wrap it in a code block.`;
 
     try {
-      const output = await this.callProvider(prompt, {
+      const output = await this.callProvider(context, prompt, {
         workingDir: context.workspaceDir,
         sandbox: 'read-only',
       });

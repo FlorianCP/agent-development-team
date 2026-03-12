@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 export class Reviewer extends Agent {
   constructor(provider: import('../providers/provider.js').Provider) {
-    super(provider, 'Reviewer');
+    super(provider, 'Code Reviewer');
   }
 
   async execute(context: ProjectContext): Promise<AgentResult> {
@@ -48,7 +48,7 @@ Respond with a JSON object in a \`\`\`json code block:
   ]
 }`;
 
-    const output = await this.callProvider(prompt, {
+    const output = await this.callProvider(context, prompt, {
       workingDir: context.workspaceDir,
       sandbox: 'read-only',
     });

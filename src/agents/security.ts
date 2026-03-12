@@ -41,7 +41,7 @@ Respond with a JSON object in a \`\`\`json code block:
   ]
 }`;
 
-    const output = await this.callProvider(prompt, {
+    const output = await this.callProvider(context, prompt, {
       workingDir: context.workspaceDir,
       sandbox: 'read-only',
     });

@@ -118,6 +118,72 @@ test('writes developer and evaluator review reports to workspace docs/reviews', 
   }
 });
 
+test('preserves full multiline summaries in review reports', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-review-full-summary-test-'));
+
+  try {
+    const fullDeveloperSummary = [
+      'Implemented the audit logging system.',
+      '',
+      'Added JSONL output per run.',
+      'Threaded logging through agent calls.',
+      'Kept reports untruncated.',
+      '',
+      'Confidence: 92',
+    ].join('\n');
+    const reviewerSummary = [
+      'Review completed.',
+      '',
+      'Detailed findings were addressed.',
+      'No remaining structural concerns.',
+      'Long-form summary should remain intact in the report.',
+    ].join('\n');
+
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) {
+        return fullDeveloperSummary;
+      }
+      if (prompt.includes('senior Code Reviewer')) {
+        return jsonBlock({
+          score: 91,
+          summary: reviewerSummary,
+          issues: [],
+        });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 93, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 94, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 95, approved: true, summary: 'Approved.', issues: [] });
+      }
+      if (prompt.includes('senior Documentation Writer')) {
+        return '# Customer Guide\n\nUse it.';
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir));
+
+    assert.equal(success, true);
+
+    const reviewsDir = join(outputDir, '.test-docs', 'reviews');
+    const developerReport = await readFile(join(reviewsDir, 'iteration-1-developer.md'), 'utf-8');
+    const reviewerReport = await readFile(join(reviewsDir, 'iteration-1-reviewer.md'), 'utf-8');
+
+    assert.match(developerReport, /Implemented the audit logging system\.\n\nAdded JSONL output per run\./);
+    assert.match(developerReport, /Threaded logging through agent calls\./);
+    assert.match(developerReport, /Kept reports untruncated\./);
+    assert.match(reviewerReport, /Review completed\.\n\nDetailed findings were addressed\./);
+    assert.match(reviewerReport, /Long-form summary should remain intact in the report\./);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test('accumulates iteration review reports across retries', async () => {
   const outputDir = await mkdtemp(join(tmpdir(), 'adt-review-reports-retry-test-'));
   let reviewCalls = 0;

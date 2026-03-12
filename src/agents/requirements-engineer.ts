@@ -33,7 +33,7 @@ Respond with a JSON object in a \`\`\`json code block:
 
 Generate between 3 and 8 focused questions. Do not ask questions that are already clearly answered in the requirement.`;
 
-    const { output, parsed } = await this.callProviderForJson(prompt, { sandbox: 'read-only' });
+    const { output, parsed } = await this.callProviderForJson(context, prompt, { sandbox: 'read-only' });
     let fallbackSource = output;
     const parsedQuestions = this.parseQuestions(parsed);
     if (parsedQuestions) {
@@ -44,7 +44,7 @@ Generate between 3 and 8 focused questions. Do not ask questions that are alread
       const retryPrompt = `${prompt}
 
 IMPORTANT: Your previous response used an invalid \`questions\` schema. Respond with a JSON object in a \`\`\`json code block where "questions" is an array of strings.`;
-      const retryOutput = await this.callProvider(retryPrompt, { sandbox: 'read-only' });
+      const retryOutput = await this.callProvider(context, retryPrompt, { sandbox: 'read-only' });
       fallbackSource = retryOutput;
       const retryParsedQuestions = this.parseQuestions(parseAgentJson(retryOutput));
       if (retryParsedQuestions) {
@@ -94,7 +94,7 @@ Make each functional requirement specific and testable. Number them (FR-001, FR-
 
 Output ONLY the PRD document in Markdown. Do not wrap it in a code block.`;
 
-    return this.callProvider(prompt, { sandbox: 'read-only' });
+    return this.callProvider(context, prompt, { sandbox: 'read-only' });
   }
 
   async execute(context: ProjectContext): Promise<AgentResult> {

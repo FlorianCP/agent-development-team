@@ -30,7 +30,7 @@ Keep the architecture as simple as possible while meeting all requirements. Pref
 
 Output ONLY the Architecture Document in Markdown. Do not wrap it in a code block.`;
 
-    const output = await this.callProvider(prompt, { sandbox: 'read-only' });
+    const output = await this.callProvider(context, prompt, { sandbox: 'read-only' });
 
     return {
       success: true,

@@ -21,17 +21,35 @@ export abstract class Agent {
 
   abstract execute(context: ProjectContext): Promise<AgentResult>;
 
-  protected async callProvider(prompt: string, options?: ProviderOptions): Promise<string> {
-    return this.provider.execute(prompt, options);
+  protected async callProvider(
+    context: ProjectContext,
+    prompt: string,
+    options?: ProviderOptions,
+  ): Promise<string> {
+    const startedAtMs = Date.now();
+
+    try {
+      const output = await this.provider.execute(prompt, options);
+      await this.logInvocation(context, prompt, output, Date.now() - startedAtMs);
+      return output;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.logInvocation(context, prompt, '', Date.now() - startedAtMs, message);
+      throw error;
+    }
   }
 
-  protected async callProviderForJson(prompt: string, options?: ProviderOptions): Promise<JsonCallResult> {
+  protected async callProviderForJson(
+    context: ProjectContext,
+    prompt: string,
+    options?: ProviderOptions,
+  ): Promise<JsonCallResult> {
     const maxAttempts = 2;
     let currentPrompt = prompt;
     let lastOutput = '';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const output = await this.callProvider(currentPrompt, options);
+      const output = await this.callProvider(context, currentPrompt, options);
       lastOutput = output;
       const parsed = parseAgentJson(output);
 
@@ -157,5 +175,29 @@ IMPORTANT: Your previous response was malformed. Respond with valid JSON in a \`
       return normalized;
     }
     return `${normalized.slice(0, 240)}...`;
+  }
+
+  private async logInvocation(
+    context: ProjectContext,
+    prompt: string,
+    output: string,
+    durationMs: number,
+    error?: string,
+  ): Promise<void> {
+    if (!context.runLogger) {
+      return;
+    }
+
+    try {
+      await context.runLogger.logInvocation({
+        agentName: this.role,
+        prompt,
+        output,
+        durationMs,
+        ...(error ? { error } : {}),
+      });
+    } catch {
+      // Observability failures should not block agent execution.
+    }
   }
 }

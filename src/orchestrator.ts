@@ -24,6 +24,7 @@ import { QAEngineer } from './agents/qa.js';
 import { SecurityEngineer } from './agents/security.js';
 import { ProductOwner } from './agents/product-owner.js';
 import { DocumentationWriter } from './agents/documentation-writer.js';
+import { RunLogger } from './run-logger.js';
 import { createReadlineInterface, askQuestion, askYesNo, log, logStep, logDetail } from './utils.js';
 
 interface VerificationCheck {
@@ -59,6 +60,7 @@ export class Orchestrator {
     const docsDir = join(workspaceDir, 'docs');
 
     await mkdir(workspaceDir, { recursive: true });
+    const runLogger = await RunLogger.create(workspaceDir);
 
     const context: ProjectContext = {
       requirement,
@@ -70,6 +72,7 @@ export class Orchestrator {
       developerTrustMode: this.config.allowFullAuto ? 'high' : 'safe',
       developerCommandPolicy: this.createDefaultCommandPolicy(),
       metrics: this.createRunMetrics(),
+      runLogger,
     };
 
     console.log('\n🤖 Agent Development Team v0.1.0');
@@ -108,6 +111,8 @@ export class Orchestrator {
       `${Date.now()}-${randomBytes(3).toString('hex')}`,
     );
     const docsDir = join(runtimeDir, 'docs');
+    await mkdir(runtimeDir, { recursive: true });
+    const runLogger = await RunLogger.create(runtimeDir);
     const rl = createReadlineInterface();
 
     const context: ProjectContext = {
@@ -121,6 +126,7 @@ export class Orchestrator {
       developerCommandPolicy: this.createDefaultCommandPolicy(),
       isSelfImprove: true,
       metrics: this.createRunMetrics(),
+      runLogger,
     };
 
     console.log('\n🤖 Agent Development Team — Self-Improvement Mode');
@@ -666,6 +672,10 @@ export class Orchestrator {
     modeLabel: 'Development' | 'Self-Improvement',
     runStartedAtMs = Date.now(),
   ): Promise<boolean> {
+    if (!context.runLogger) {
+      context.runLogger = await RunLogger.create(resolve(context.docsDir, '..'));
+    }
+
     const poApproved = await this.developmentLoop(context, rl);
     let verificationSuccess = true;
     let documentationSuccess = true;
@@ -884,7 +894,7 @@ export class Orchestrator {
       agentKey: 'developer',
       iteration: context.iteration,
       score: this.extractDeveloperConfidenceScore(result.output) ?? 'N/A',
-      summary: this.excerptReportText(result.output),
+      summary: this.renderFullReportSummary(result.output),
     };
   }
 
@@ -899,7 +909,7 @@ export class Orchestrator {
       agentKey,
       iteration: context.iteration,
       score: this.formatOptionalScore(result.score),
-      summary: this.excerptReportText(result.output),
+      summary: this.renderFullReportSummary(result.output),
       issues: result.issues ?? [],
     };
   }
@@ -1296,24 +1306,13 @@ export class Orchestrator {
     return match[1];
   }
 
-  private excerptReportText(content: string): string {
+  private renderFullReportSummary(content: string): string {
     const normalized = content.replace(/\r\n/g, '\n').trim();
     if (normalized.length === 0) {
       return 'No summary provided.';
     }
 
-    const lines = normalized
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .slice(0, 6);
-    const excerpt = lines.join(' ');
-
-    if (excerpt.length <= 500) {
-      return excerpt;
-    }
-
-    return `${excerpt.slice(0, 497)}...`;
+    return normalized;
   }
 
   private logRunSummary(context: ProjectContext, runStartedAtMs: number): void {

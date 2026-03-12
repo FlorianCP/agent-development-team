@@ -1,3 +1,5 @@
+import type { RunLogger } from './run-logger.js';
+
 export interface ProviderOptions {
   workingDir?: string;
   model?: string;
@@ -46,6 +48,7 @@ export interface ProjectContext {
   developerCommandPolicy?: CommandPolicy;
   isSelfImprove?: boolean;
   metrics?: RunMetrics;
+  runLogger?: RunLogger;
 }
 
 export interface ADTConfig {
