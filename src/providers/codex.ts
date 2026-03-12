@@ -683,16 +683,18 @@ export class CodexProvider implements Provider {
     candidatePath: string,
     requireTrustedInstallPath: boolean,
   ): Promise<string> {
+    const normalizedCandidatePath = resolve(candidatePath);
+
     try {
-      await access(candidatePath, fsConstants.X_OK);
+      await access(normalizedCandidatePath, fsConstants.X_OK);
     } catch {
       throw new CodexExecutionError(
-        `Codex binary is not executable: ${candidatePath}`,
+        `Codex binary is not executable: ${normalizedCandidatePath}`,
         'BINARY_NOT_FOUND',
       );
     }
 
-    const resolvedPath = await realpath(candidatePath);
+    const resolvedPath = await realpath(normalizedCandidatePath);
     const fileStats = await stat(resolvedPath);
 
     if (!fileStats.isFile()) {
@@ -727,7 +729,9 @@ export class CodexProvider implements Provider {
       }
     }
 
-    return resolvedPath;
+    // Spawn via the validated candidate path so stable symlinks like
+    // /opt/homebrew/bin/codex continue working across cask upgrades.
+    return normalizedCandidatePath;
   }
 }
 

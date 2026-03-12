@@ -362,7 +362,7 @@ test('explicit codexPath requires trusted install dir unless insecure override i
   }
 });
 
-test('pins validated canonical binary path across symlink target changes', async () => {
+test('uses validated symlink path so target changes are picked up on later executions', async () => {
   if (process.platform === 'win32') {
     return;
   }
@@ -400,7 +400,7 @@ test('pins validated canonical binary path across symlink target changes', async
     await symlink(targetB, codexLink);
 
     const second = await provider.execute('test', { sandbox: 'read-only' });
-    assert.equal(second, 'A');
+    assert.equal(second, 'B');
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
