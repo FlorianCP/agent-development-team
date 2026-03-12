@@ -335,9 +335,9 @@ test('shell-escapes metacharacters in suggested self-improve commands', async ()
           issues: [
             {
               severity: 'major',
-              description: "Escape $HOME, `whoami`, and teammate's note safely.",
+              description: "Escape $HOME, `whoami`, $(uname), and teammate's note safely.",
               file: 'src/orchestrator.ts',
-              suggestion: "Wrap it's prompt without running `echo $HOME`.",
+              suggestion: "Wrap it's prompt without running `echo $HOME` or $(uname).",
             },
           ],
         });
@@ -367,11 +367,11 @@ test('shell-escapes metacharacters in suggested self-improve commands', async ()
       'utf-8',
     );
     const expectedCommand =
-      "npm run start -- self-improve 'Fix this major issue in src/orchestrator.ts: Escape $HOME, `whoami`, and teammate'\"'\"'s note safely. Suggested fix: Wrap it'\"'\"'s prompt without running `echo $HOME`.'";
+      "npm run start -- self-improve 'Fix this major issue in src/orchestrator.ts: Escape $HOME, `whoami`, $(uname), and teammate'\"'\"'s note safely. Suggested fix: Wrap it'\"'\"'s prompt without running `echo $HOME` or $(uname).'";
 
     assert.match(
       reviewerReport,
-      /Suggested self-improve prompt: Fix this major issue in src\/orchestrator\.ts: Escape \$HOME, `whoami`, and teammate's note safely\. Suggested fix: Wrap it's prompt without running `echo \$HOME`\./,
+      /Suggested self-improve prompt: Fix this major issue in src\/orchestrator\.ts: Escape \$HOME, `whoami`, \$\(uname\), and teammate's note safely\. Suggested fix: Wrap it's prompt without running `echo \$HOME` or \$\(uname\)\./,
     );
     assert.equal(reviewerReport.includes(expectedCommand), true);
   } finally {
