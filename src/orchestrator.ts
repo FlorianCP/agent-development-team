@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Interface } from 'node:readline';
 import type { Provider } from './providers/provider.js';
 import type {
@@ -124,8 +125,8 @@ export class Orchestrator {
     const runStartedAtMs = Date.now();
     const workspaceDir = resolve('.');
     const runtimeDir = join(
-      workspaceDir,
-      '.adt-self-improve',
+      tmpdir(),
+      'adt-self-improve',
       `${Date.now()}-${randomBytes(3).toString('hex')}`,
     );
     const docsDir = join(runtimeDir, 'docs');
@@ -152,6 +153,7 @@ export class Orchestrator {
     console.log('═'.repeat(60));
     log('📁', `Working on: ${workspaceDir}`);
     log('📄', `Using runtime docs: ${docsDir}`);
+    log('🧾', `Run logs: ${runLogger.filePath}`);
 
     // Skip requirements/architecture for self-improvement — go straight to development
     context.prd = `# Self-Improvement PRD\n\n## Requirement\n${toUntrustedDataBlock(requirement)}\n\n## Context\nThis is the ADT codebase itself. Make the requested improvements while maintaining the existing architecture and conventions.\n\n## Acceptance Criteria\n- The requested improvement is implemented\n- Existing functionality is not broken\n- Code follows project conventions\n- npm run build succeeds`;
@@ -754,20 +756,54 @@ export class Orchestrator {
       context.runLogger = await RunLogger.create(resolve(context.docsDir, '..'));
     }
     this.activeRunLogger = context.runLogger;
+    await this.ensureInitialNarrativeReports(context);
     await this.logRunEvent(context, {
       eventType: 'workflow_started',
       phase: modeLabel.toLowerCase(),
       iteration: context.iteration,
     });
 
+    await this.logRunEvent(context, {
+      eventType: 'phase_started',
+      phase: 'development',
+      iteration: context.iteration,
+    });
     const poApproved = await this.developmentLoop(context, rl);
+    await this.logRunEvent(context, {
+      eventType: 'phase_completed',
+      phase: 'development',
+      iteration: context.iteration,
+      details: {
+        productOwnerApproved: poApproved,
+      },
+    });
     let verificationSuccess = true;
     let documentationSuccess = true;
 
     if (poApproved) {
+      await this.logRunEvent(context, {
+        eventType: 'phase_started',
+        phase: 'verification',
+        iteration: context.iteration,
+      });
       verificationSuccess = await this.postApprovalVerificationPhase(context);
+      await this.logRunEvent(context, {
+        eventType: verificationSuccess ? 'phase_completed' : 'phase_failed',
+        phase: 'verification',
+        iteration: context.iteration,
+      });
       if (verificationSuccess) {
+        await this.logRunEvent(context, {
+          eventType: 'phase_started',
+          phase: 'documentation',
+          iteration: context.iteration,
+        });
         documentationSuccess = await this.documentationPhase(context);
+        await this.logRunEvent(context, {
+          eventType: documentationSuccess ? 'phase_completed' : 'phase_failed',
+          phase: 'documentation',
+          iteration: context.iteration,
+        });
       }
 
       if (verificationSuccess && documentationSuccess) {
@@ -794,6 +830,22 @@ export class Orchestrator {
     });
 
     return poApproved && verificationSuccess && documentationSuccess;
+  }
+
+  private async ensureInitialNarrativeReports(context: ProjectContext): Promise<void> {
+    if (context.prd) {
+      await this.writeReviewReport(
+        context,
+        this.createNarrativeReviewReport('Requirements Engineer', 'requirements-engineer', 0, context.prd),
+      );
+    }
+
+    if (context.architecture) {
+      await this.writeReviewReport(
+        context,
+        this.createNarrativeReviewReport('Architect', 'architect', 0, context.architecture),
+      );
+    }
   }
 
   private async writeSpecDocuments(context: ProjectContext): Promise<void> {
@@ -1601,8 +1653,13 @@ export class Orchestrator {
     const tag = `adt-checkpoint-iter-${context.iteration}`;
     try {
       const execFileAsync = promisify(execFile);
-      // Stage all changes and commit
-      await execFileAsync('git', ['add', '-A'], { cwd: context.workspaceDir });
+      const exclusions = [
+        ':(exclude).adt-self-improve',
+        ':(exclude).adt-self-improve/**',
+        ':(exclude)logs',
+        ':(exclude)logs/**',
+      ];
+      await execFileAsync('git', ['add', '-A', '--', '.', ...exclusions], { cwd: context.workspaceDir });
       await execFileAsync(
         'git',
         ['commit', '-m', `adt: checkpoint before iteration ${context.iteration}`, '--allow-empty'],

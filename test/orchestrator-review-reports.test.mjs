@@ -91,10 +91,21 @@ test('writes developer and evaluator review reports to workspace docs/reviews', 
     assert.equal(success, true);
 
     const reviewsDir = join(outputDir, '.test-docs', 'reviews');
+    const requirementsReport = await readFile(join(reviewsDir, 'iteration-0-requirements-engineer.md'), 'utf-8');
+    const architectReport = await readFile(join(reviewsDir, 'iteration-0-architect.md'), 'utf-8');
     const developerReport = await readFile(join(reviewsDir, 'iteration-1-developer.md'), 'utf-8');
     const reviewerReport = await readFile(join(reviewsDir, 'iteration-1-reviewer.md'), 'utf-8');
     const qaReport = await readFile(join(reviewsDir, 'iteration-1-qa.md'), 'utf-8');
     const securityReport = await readFile(join(reviewsDir, 'iteration-1-security.md'), 'utf-8');
+    const productOwnerReport = await readFile(join(reviewsDir, 'iteration-1-product-owner.md'), 'utf-8');
+
+    assert.match(requirementsReport, /# Requirements Engineer Report/);
+    assert.match(requirementsReport, /- Iteration: 0/);
+    assert.match(requirementsReport, /## Summary/);
+
+    assert.match(architectReport, /# Architect Report/);
+    assert.match(architectReport, /- Iteration: 0/);
+    assert.match(architectReport, /## Summary/);
 
     assert.match(developerReport, /# Developer Report/);
     assert.match(developerReport, /- Iteration: 1/);
@@ -121,6 +132,9 @@ test('writes developer and evaluator review reports to workspace docs/reviews', 
 
     assert.match(securityReport, /# Security Engineer Report/);
     assert.match(securityReport, /- Score: 96/);
+
+    assert.match(productOwnerReport, /# Product Owner Report/);
+    assert.match(productOwnerReport, /- Score: 95/);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

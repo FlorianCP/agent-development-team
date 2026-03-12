@@ -90,7 +90,7 @@ Use `adt ...` / `npx adt ...` only for published or globally installed versions.
 | `--threshold <n>` | `75` | Minimum quality score (0-100) |
 | `--provider-timeout-ms <n>` | `3600000` | Timeout per provider call in milliseconds |
 | `--output-dir <dir>` | `./output` | Where to create projects |
-| `--full-auto` | `false` | Opt into autonomous developer execution (`--full-auto`) |
+| `--full-auto` | `false` | Request autonomous developer execution. The Codex provider currently fails closed in high-trust mode until it has a provenance-safe audit channel. |
 | `--yes-self-improve` | `false` | Required for non-interactive self-improvement runs |
 | `--no-git-checkpoints` | `false` | Disable git checkpoints during self-improvement iterations |
 | `--allow-external-prd` | `false` | Allow `--prd` paths outside current workspace |
@@ -187,14 +187,39 @@ Example console output:
 
 ## Review Reports
 
-After each development loop iteration, structured Markdown reports are saved for the Developer, Code Reviewer, QA Engineer, and Security Engineer.
+After each development loop iteration, structured Markdown reports are saved for the Requirements Engineer, Architect, Developer, Code Reviewer, QA Engineer, Security Engineer, and Product Owner.
 
 - **Normal runs:** Reports are saved to `docs/reviews/` inside the project workspace.
-- **Self-improvement runs:** Reports are saved inside the `.adt-self-improve/<run-id>/docs/reviews/` directory.
+- **Self-improvement runs:** Reports are saved inside the temporary runtime directory for that run. ADT prints the exact path when the run starts.
 
-File naming: `iteration-N-developer.md`, `iteration-N-reviewer.md`, `iteration-N-qa.md`, `iteration-N-security.md`.
+File naming includes:
+- `iteration-0-requirements-engineer.md`
+- `iteration-0-architect.md`
+- `iteration-N-developer.md`
+- `iteration-N-reviewer.md`
+- `iteration-N-qa.md`
+- `iteration-N-security.md`
+- `iteration-N-product-owner.md`
 
 Each report contains the agent name, iteration number, score, a summary, and issues grouped by severity (critical, major, minor, info). Reports accumulate across iterations, providing a full audit trail of the development process.
+
+## Run Logs
+
+Each run also writes an atomic JSONL log named `logs/run-<timestamp>.jsonl`.
+
+- **Normal runs:** The log is written under the generated project workspace, for example `output/<project>/logs/run-2026-03-12T14-05-33.jsonl`.
+- **Self-improvement runs:** The log is written inside the temporary runtime directory printed at startup, not inside the repository worktree.
+
+Expected event types include:
+- `workflow_started`, `workflow_completed`
+- `phase_started`, `phase_completed`
+- `iteration_started`, `iteration_completed`
+- `agent_started`, `agent_completed`, `agent_failed`
+- `provider_invocation`
+- `document_written`, `report_written`
+- `evaluator_retry`, `evaluator_failed`
+
+`provider_invocation` entries store prompt and output hashes, score/issue metadata, and duration. Raw model output is omitted by default; set `ADT_LOG_PROVIDER_OUTPUT=1` to include sanitized output text in the log.
 
 ### Adding a Provider
 

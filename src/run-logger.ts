@@ -24,7 +24,10 @@ interface LoggedInvocationEntry {
   agentName: string;
   timestamp: string;
   promptHash: string;
-  output: string;
+  outputHash: string;
+  outputLength: number;
+  outputStored: boolean;
+  output?: string;
   score: number | string | null;
   issues: LoggedIssue[];
   durationMs: number;
@@ -56,9 +59,11 @@ interface LoggedEventEntry {
 export class RunLogger {
   readonly filePath: string;
   private writeChain: Promise<void> = Promise.resolve();
+  private readonly logProviderOutput: boolean;
 
   private constructor(filePath: string) {
     this.filePath = filePath;
+    this.logProviderOutput = process.env['ADT_LOG_PROVIDER_OUTPUT'] === '1';
   }
 
   static async create(baseDir: string, now = new Date()): Promise<RunLogger> {
@@ -89,12 +94,16 @@ export class RunLogger {
 
   private createEntry(input: RunLoggerEntryInput): LoggedInvocationEntry {
     const parsed = parseAgentJson(input.output);
+    const sanitizedOutput = this.sanitizeOutput(input.output);
     return {
       eventType: 'provider_invocation',
       agentName: input.agentName,
       timestamp: input.timestamp ?? new Date().toISOString(),
       promptHash: createHash('sha256').update(input.prompt).digest('hex'),
-      output: input.output,
+      outputHash: createHash('sha256').update(input.output).digest('hex'),
+      outputLength: input.output.length,
+      outputStored: this.logProviderOutput,
+      ...(this.logProviderOutput ? { output: sanitizedOutput } : {}),
       score: this.extractScore(parsed, input.output),
       issues: this.extractIssues(parsed),
       durationMs: input.durationMs,
@@ -104,8 +113,20 @@ export class RunLogger {
 
   private async writeEntry(entry: LoggedInvocationEntry | LoggedEventEntry): Promise<void> {
     const line = `${JSON.stringify(entry)}\n`;
-    this.writeChain = this.writeChain.then(() => appendFile(this.filePath, line, 'utf-8'));
+    this.writeChain = this.writeChain
+      .catch(() => undefined)
+      .then(() => appendFile(this.filePath, line, 'utf-8'));
     await this.writeChain;
+  }
+
+  private sanitizeOutput(output: string): string {
+    return output
+      .replace(/-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]')
+      .replace(/\bsk-[a-zA-Z0-9_-]{20,}\b/g, '[REDACTED_TOKEN]')
+      .replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b/g, '[REDACTED_TOKEN]')
+      .replace(/\bBearer\s+[A-Za-z0-9\-._~+/=]{20,}\b/gi, 'Bearer [REDACTED]')
+      .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}\b/g, '[REDACTED_JWT]')
+      .replace(/(api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|password|secret)\s*[:=]\s*(['"]?)[^\s'"]{12,}\2/gi, '$1=[REDACTED]');
   }
 
   private extractScore(parsed: Record<string, unknown> | null, output: string): number | string | null {

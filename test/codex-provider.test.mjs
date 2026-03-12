@@ -20,7 +20,7 @@ async function createFakeCodexBinary(tempDir, scriptBody) {
   return scriptPath;
 }
 
-test('high-trust mode enforces command policy on direct executed commands', async () => {
+test('high-trust mode is disabled because stdout telemetry is not provenance-safe', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
 
   try {
@@ -39,38 +39,6 @@ process.exit(0);
       defaultTimeoutMs: 5000,
       allowUntrustedCodexPath: true,
     });
-    const output = await provider.execute('test', {
-      trustMode: 'high',
-      sandbox: 'workspace-write',
-      commandPolicy: createPolicy(),
-    });
-
-    assert.equal(output, 'ok');
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('high-trust mode fails closed when executed command violates policy', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
-
-  try {
-    const codexPath = await createFakeCodexBinary(tempDir, `
-const args = process.argv.slice(2);
-const outputIndex = args.indexOf('-o');
-if (outputIndex >= 0 && args[outputIndex + 1]) {
-  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
-}
-console.log(JSON.stringify({ type: 'command_execution', command: 'rm -rf /tmp/data' }));
-process.exit(0);
-`);
-
-    const provider = new CodexProvider(undefined, {
-      codexPath,
-      defaultTimeoutMs: 5000,
-      allowUntrustedCodexPath: true,
-    });
-
     await assert.rejects(
       () => provider.execute('test', {
         trustMode: 'high',
@@ -84,139 +52,7 @@ process.exit(0);
   }
 });
 
-test('high-trust mode rejects commands not in allowed prefixes', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
-
-  try {
-    const codexPath = await createFakeCodexBinary(tempDir, `
-const args = process.argv.slice(2);
-const outputIndex = args.indexOf('-o');
-if (outputIndex >= 0 && args[outputIndex + 1]) {
-  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
-}
-console.log(JSON.stringify({ type: 'command_execution', command: 'python setup.py install' }));
-process.exit(0);
-`);
-
-    const provider = new CodexProvider(undefined, {
-      codexPath,
-      defaultTimeoutMs: 5000,
-      allowUntrustedCodexPath: true,
-    });
-
-    await assert.rejects(
-      () => provider.execute('test', {
-        trustMode: 'high',
-        sandbox: 'workspace-write',
-        commandPolicy: createPolicy(),
-      }),
-      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
-    );
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('high-trust mode rejects command chaining metacharacters', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
-
-  try {
-    const codexPath = await createFakeCodexBinary(tempDir, `
-const args = process.argv.slice(2);
-const outputIndex = args.indexOf('-o');
-if (outputIndex >= 0 && args[outputIndex + 1]) {
-  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
-}
-console.log(JSON.stringify({ type: 'command_execution', command: 'npm run build && whoami' }));
-process.exit(0);
-`);
-
-    const provider = new CodexProvider(undefined, {
-      codexPath,
-      defaultTimeoutMs: 5000,
-      allowUntrustedCodexPath: true,
-    });
-
-    await assert.rejects(
-      () => provider.execute('test', {
-        trustMode: 'high',
-        sandbox: 'workspace-write',
-        commandPolicy: createPolicy(),
-      }),
-      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
-    );
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('high-trust mode fails closed when command telemetry is unavailable', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
-
-  try {
-    const codexPath = await createFakeCodexBinary(tempDir, `
-const args = process.argv.slice(2);
-const outputIndex = args.indexOf('-o');
-if (outputIndex >= 0 && args[outputIndex + 1]) {
-  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
-}
-console.log('non-json telemetry line');
-process.exit(0);
-`);
-
-    const provider = new CodexProvider(undefined, {
-      codexPath,
-      defaultTimeoutMs: 5000,
-      allowUntrustedCodexPath: true,
-    });
-
-    await assert.rejects(
-      () => provider.execute('test', {
-        trustMode: 'high',
-        sandbox: 'workspace-write',
-        commandPolicy: createPolicy(),
-      }),
-      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
-    );
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('high-trust mode fails closed when telemetry has no commands and no explicit no-command event', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
-
-  try {
-    const codexPath = await createFakeCodexBinary(tempDir, `
-const args = process.argv.slice(2);
-const outputIndex = args.indexOf('-o');
-if (outputIndex >= 0 && args[outputIndex + 1]) {
-  writeFileSync(args[outputIndex + 1], 'ok', 'utf-8');
-}
-console.log(JSON.stringify({ type: 'session_summary', status: 'completed' }));
-process.exit(0);
-`);
-
-    const provider = new CodexProvider(undefined, {
-      codexPath,
-      defaultTimeoutMs: 5000,
-      allowUntrustedCodexPath: true,
-    });
-
-    await assert.rejects(
-      () => provider.execute('test', {
-        trustMode: 'high',
-        sandbox: 'workspace-write',
-        commandPolicy: createPolicy(),
-      }),
-      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
-    );
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('high-trust mode accepts explicit no-command execution telemetry', async () => {
+test('high-trust mode rejects even explicit no-command stdout telemetry', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'adt-codex-test-'));
 
   try {
@@ -235,13 +71,15 @@ process.exit(0);
       defaultTimeoutMs: 5000,
       allowUntrustedCodexPath: true,
     });
-    const output = await provider.execute('test', {
-      trustMode: 'high',
-      sandbox: 'workspace-write',
-      commandPolicy: createPolicy(),
-    });
 
-    assert.equal(output, 'ok');
+    await assert.rejects(
+      () => provider.execute('test', {
+        trustMode: 'high',
+        sandbox: 'workspace-write',
+        commandPolicy: createPolicy(),
+      }),
+      (error) => error && error.code === 'COMMAND_POLICY_VIOLATION',
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

@@ -101,24 +101,35 @@ test('writes structured jsonl run logs for each agent invocation', async () => {
       .split('\n')
       .map(line => JSON.parse(line));
 
-    assert.equal(entries.length, 6);
+    assert.ok(entries.length > 6);
+    const invocationEntries = entries.filter(entry => entry.eventType === 'provider_invocation');
+    const eventEntries = entries.filter(entry => entry.eventType !== 'provider_invocation');
+
+    assert.equal(invocationEntries.length, 6);
     assert.deepEqual(
-      entries.map(entry => entry.agentName),
+      invocationEntries.map(entry => entry.agentName),
       ['Developer', 'Code Reviewer', 'QA Engineer', 'Security Engineer', 'Product Owner', 'Documentation Writer'],
     );
 
     for (const entry of entries) {
       assert.match(entry.timestamp, /^\d{4}-\d{2}-\d{2}T/);
-      assert.match(entry.promptHash, /^[a-f0-9]{64}$/);
-      assert.equal(typeof entry.output, 'string');
-      assert.equal(typeof entry.durationMs, 'number');
     }
 
-    const developerEntry = entries.find(entry => entry.agentName === 'Developer');
-    assert.equal(developerEntry.score, 88);
-    assert.equal(developerEntry.output, 'Implemented changes.\nConfidence: 88');
+    for (const entry of invocationEntries) {
+      assert.match(entry.promptHash, /^[a-f0-9]{64}$/);
+      assert.match(entry.outputHash, /^[a-f0-9]{64}$/);
+      assert.equal(typeof entry.outputLength, 'number');
+      assert.equal(typeof entry.outputStored, 'boolean');
+      assert.equal(typeof entry.durationMs, 'number');
+      assert.equal('output' in entry, false);
+    }
 
-    const reviewerEntry = entries.find(entry => entry.agentName === 'Code Reviewer');
+    const developerEntry = invocationEntries.find(entry => entry.agentName === 'Developer');
+    assert.equal(developerEntry.score, 88);
+    assert.equal(developerEntry.outputStored, false);
+    assert.equal(developerEntry.outputLength, 'Implemented changes.\nConfidence: 88'.length);
+
+    const reviewerEntry = invocationEntries.find(entry => entry.agentName === 'Code Reviewer');
     assert.equal(reviewerEntry.score, 91);
     assert.deepEqual(reviewerEntry.issues, [
       {
@@ -127,6 +138,20 @@ test('writes structured jsonl run logs for each agent invocation', async () => {
         suggestion: 'Tidy naming.',
       },
     ]);
+
+    const eventTypes = new Set(eventEntries.map(entry => entry.eventType));
+    for (const eventType of [
+      'workflow_started',
+      'iteration_started',
+      'agent_started',
+      'agent_completed',
+      'report_written',
+      'phase_started',
+      'phase_completed',
+      'workflow_completed',
+    ]) {
+      assert.ok(eventTypes.has(eventType), `expected event type ${eventType}`);
+    }
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

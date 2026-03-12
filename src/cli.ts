@@ -25,7 +25,7 @@ Options:
   --threshold <n>      Minimum quality score 0-100 (default: 75)
   --provider-timeout-ms <n> Timeout per provider call in milliseconds (default: 3600000)
   --output-dir <dir>   Output directory (default: ./output)
-  --full-auto          Opt into autonomous developer execution (--full-auto)
+  --full-auto          Request autonomous developer execution; Codex currently fails closed in high-trust mode
   --yes-self-improve   Required for non-interactive self-improvement runs
   --no-git-checkpoints Disable git checkpoints during self-improvement iterations
   --allow-external-prd Allow --prd files outside the current workspace

@@ -106,9 +106,14 @@ export class CodexProvider implements Provider {
     const promptFile = join(tmpDir, `prompt-${randomBytes(4).toString('hex')}.md`);
 
     const isHighTrust = options?.trustMode === 'high';
-    const commandPolicy = isHighTrust
-      ? this.prepareCommandPolicy(options?.commandPolicy)
-      : undefined;
+
+    if (isHighTrust) {
+      this.prepareCommandPolicy(options?.commandPolicy);
+      throw new CodexExecutionError(
+        'High-trust execution is disabled: Codex CLI command telemetry currently shares stdout with subprocess output, so command provenance cannot be verified safely.',
+        'COMMAND_POLICY_VIOLATION',
+      );
+    }
 
     try {
       await writeFile(promptFile, prompt, 'utf-8');
@@ -147,7 +152,6 @@ export class CodexProvider implements Provider {
         timeoutMs,
         workingDir: options?.workingDir,
         providerOptions: options,
-        commandPolicy,
       });
 
       let finalOutput: string;
@@ -171,7 +175,6 @@ export class CodexProvider implements Provider {
     timeoutMs: number;
     workingDir?: string;
     providerOptions?: ProviderOptions;
-    commandPolicy?: EffectiveCommandPolicy;
   }): Promise<string> {
     const {
       codexBinaryPath,
@@ -180,7 +183,6 @@ export class CodexProvider implements Provider {
       timeoutMs,
       workingDir,
       providerOptions,
-      commandPolicy,
     } = params;
 
     return new Promise((resolvePromise, rejectPromise) => {
@@ -195,8 +197,6 @@ export class CodexProvider implements Provider {
       let timedOut = false;
       let exited = false;
       let killTimeoutHandle: NodeJS.Timeout | null = null;
-      const telemetryCollector = commandPolicy ? new CommandTelemetryCollector() : null;
-
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
         child.kill('SIGTERM');
@@ -211,7 +211,6 @@ export class CodexProvider implements Provider {
       child.stdout.on('data', (data: Buffer) => {
         const chunk = data.toString();
         stdout = this.appendOutput(stdout, chunk);
-        telemetryCollector?.ingest(chunk);
       });
 
       child.stderr.on('data', (data: Buffer) => {
@@ -266,19 +265,6 @@ export class CodexProvider implements Provider {
             ),
           );
           return;
-        }
-
-        if (commandPolicy && telemetryCollector) {
-          telemetryCollector.finalize();
-          try {
-            this.enforceHighTrustCommandPolicy(
-              telemetryCollector.buildAudit(),
-              commandPolicy,
-            );
-          } catch (error) {
-            rejectPromise(error);
-            return;
-          }
         }
 
         resolvePromise(stdout);
