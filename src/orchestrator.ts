@@ -944,32 +944,53 @@ export class Orchestrator {
   }
 
   private renderReportIssueGroups(issues: Issue[]): string {
-    const grouped = this.groupIssuesBySeverity(
-      [{ name: 'Report', result: { success: true, output: '', issues } }],
-      false,
-    );
-
     return [
       '### Critical',
-      ...this.renderReportIssueList(grouped.critical),
+      ...this.renderReportIssueList(issues, 'critical'),
       '',
       '### Major',
-      ...this.renderReportIssueList(grouped.major),
+      ...this.renderReportIssueList(issues, 'major'),
       '',
       '### Minor',
-      ...this.renderReportIssueList(grouped.minor),
+      ...this.renderReportIssueList(issues, 'minor'),
       '',
       '### Info',
-      ...this.renderReportIssueList(grouped.info),
+      ...this.renderReportIssueList(issues, 'info'),
     ].join('\n');
   }
 
-  private renderReportIssueList(items: string[]): string[] {
-    if (items.length === 0) {
+  private renderReportIssueList(
+    issues: Issue[],
+    severity: Issue['severity'],
+  ): string[] {
+    const matchingIssues = issues.filter(issue => issue.severity === severity);
+    if (matchingIssues.length === 0) {
       return ['- None'];
     }
 
-    return items.map(item => `- ${item}`);
+    return matchingIssues.flatMap(issue => this.renderReportIssue(issue));
+  }
+
+  private renderReportIssue(issue: Issue): string[] {
+    const location = issue.file ? ` (${issue.file})` : '';
+    const suggestion = issue.suggestion ? ` -> ${issue.suggestion}` : '';
+    const prompt = this.createSelfImprovePrompt(issue);
+    return [
+      `- ${issue.description}${location}${suggestion}`,
+      `  Suggested self-improve command: \`npm run start -- self-improve "${this.escapeShellDoubleQuotes(prompt)}"\``,
+    ];
+  }
+
+  private createSelfImprovePrompt(issue: Issue): string {
+    const location = issue.file ? ` in ${issue.file}` : '';
+    const suggestion = issue.suggestion ? ` Suggested fix: ${issue.suggestion}` : '';
+    return `Fix this ${issue.severity} issue${location}: ${issue.description}${suggestion}`
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private escapeShellDoubleQuotes(value: string): string {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
   private async publishIterationReport(

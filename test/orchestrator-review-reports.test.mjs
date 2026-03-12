@@ -107,6 +107,10 @@ test('writes developer and evaluator review reports to workspace docs/reviews', 
     assert.match(reviewerReport, /- Score: 91/);
     assert.match(reviewerReport, /### Minor/);
     assert.match(reviewerReport, /Tighten naming\. \(src\/orchestrator\.ts\) -> Use a clearer helper name\./);
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve command: `npm run start -- self-improve "Fix this minor issue in src\/orchestrator\.ts: Tighten naming\. Suggested fix: Use a clearer helper name\."`/,
+    );
 
     assert.match(qaReport, /# QA Engineer Report/);
     assert.match(qaReport, /- Score: 93/);
@@ -236,6 +240,77 @@ test('accumulates iteration review reports across retries', async () => {
     assert.match(iterationTwoReviewer, /- Score: 90/);
     assert.match(iterationOneDeveloper, /- Iteration: 1/);
     assert.match(iterationTwoDeveloper, /- Iteration: 2/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('includes suggested self-improve commands for issues across all severities', async () => {
+  const outputDir = await mkdtemp(join(tmpdir(), 'adt-review-reports-prompts-test-'));
+  let reviewCalls = 0;
+
+  try {
+    const provider = new FakeProvider(async (prompt) => {
+      if (prompt.includes('senior Software Developer')) {
+        return 'Implemented changes.\nConfidence: 89';
+      }
+      if (prompt.includes('senior Code Reviewer')) {
+        reviewCalls++;
+        if (reviewCalls > 1) {
+          return jsonBlock({ score: 92, summary: 'Review passed.', issues: [] });
+        }
+        return jsonBlock({
+          score: 88,
+          summary: 'Review found issues.',
+          issues: [
+            { severity: 'critical', description: 'Handle null parser result.', file: 'src/agents/agent.ts', suggestion: 'Add a null guard before reading score.' },
+            { severity: 'major', description: 'Retry flow lacks assertion coverage.', suggestion: 'Add a retry-path test.' },
+            { severity: 'minor', description: 'Rename helper for clarity.' },
+            { severity: 'info', description: 'Document the report artifact location.', file: 'README.md' },
+          ],
+        });
+      }
+      if (prompt.includes('senior QA Engineer')) {
+        return jsonBlock({ score: 93, summary: 'QA passed.', issues: [] });
+      }
+      if (prompt.includes('senior Security Engineer')) {
+        return jsonBlock({ score: 96, summary: 'Security passed.', issues: [] });
+      }
+      if (prompt.includes('You are a Product Owner')) {
+        return jsonBlock({ score: 95, approved: true, summary: 'Approved.', issues: [] });
+      }
+      if (prompt.includes('senior Documentation Writer')) {
+        return '# Customer Guide\n\nUse it.';
+      }
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+
+    const orchestrator = new Orchestrator(provider, createConfig(outputDir, 2));
+    const success = await runApprovedWorkflow(orchestrator, createPreparedContext(outputDir, 2));
+
+    assert.equal(success, true);
+
+    const reviewerReport = await readFile(
+      join(outputDir, '.test-docs', 'reviews', 'iteration-1-reviewer.md'),
+      'utf-8',
+    );
+
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve command: `npm run start -- self-improve "Fix this critical issue in src\/agents\/agent\.ts: Handle null parser result\. Suggested fix: Add a null guard before reading score\."`/,
+    );
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve command: `npm run start -- self-improve "Fix this major issue: Retry flow lacks assertion coverage\. Suggested fix: Add a retry-path test\."`/,
+    );
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve command: `npm run start -- self-improve "Fix this minor issue: Rename helper for clarity\."`/,
+    );
+    assert.match(
+      reviewerReport,
+      /Suggested self-improve command: `npm run start -- self-improve "Fix this info issue in README\.md: Document the report artifact location\."`/,
+    );
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
